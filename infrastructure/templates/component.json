@@ -1,21 +1,35 @@
 {
     "AWSTemplateFormatVersion": "2010-09-09",
-    "Description": "This stack only spun up during a loadtest",
+    "Description": "Describe your stack there",
     "Parameters": {
-        "BastionAccessSecurityGroup": {
-            "Description": "The security group that permits access from the bastions",
+        "CnameEntry": {
+            "Default": "ugc-loadtest.int",
+            "Description": "The CNAME DNS entry for the component",
+            "Type": "String"
+        },
+        "CoreInfrastructureStackName": {
+            "Default": "core-infrastructure",
+            "Description": "Name of the core-infrastructure stack to import network parameters from",
+            "Type": "String"
+        },
+        "DomainNameBase": {
+            "Default": "c7dff5ab13c48206.xhst.bbci.co.uk.",
+            "Description": "The {account_hash}.xhst.bbci.co.uk domain (ending with a '.') under which new DNS entries are added",
             "Type": "String"
         },
         "Environment": {
             "AllowedValues": [
                 "int",
                 "test",
+                "stage",
                 "live"
             ],
+            "Default": "int",
             "Description": "The name of the environment.",
             "Type": "String"
         },
         "ImageId": {
+            "Default": "ami-0e8fb02fa7ec321b6",
             "Description": "The AMI to use for this component",
             "Type": "String"
         },
@@ -25,84 +39,42 @@
             "Type": "String"
         },
         "KeyName": {
+            "Default": "cosmos",
             "Description": "Name of existing EC2 keypair to enable SSH access to the created instances",
-            "Type": "String"
-        },
-        "MaxSize": {
-            "Default": "2",
-            "Description": "Maximum count of EC2 instances present",
-            "Type": "String"
-        },
-        "MinSize": {
-            "Default": "2",
-            "Description": "Minimum count of EC2 instances present",
-            "Type": "String"
-        },
-        "PrivateSubnet1Id": {
-            "Description": "The ID of private subnet 1",
-            "Type": "String"
-        },
-        "PrivateSubnet2Id": {
-            "Description": "The ID of private subnet 2",
-            "Type": "String"
-        },
-        "PrivateSubnet3Id": {
-            "Description": "The ID of private subnet 3",
-            "Type": "String"
-        },
-        "UpdateMaxBatchSize": {
-            "Default": "1",
-            "Description": "The maximum number of instances to be killed at one time during an ASG update.",
-            "Type": "String"
-        },
-        "UpdateMinInService": {
-            "Default": "0",
-            "Description": "The minimum number of instances in service during an ASG update",
             "Type": "String"
         },
         "UpdatePauseTime": {
             "Default": "PT0S",
             "Description": "The time to wait between new instances coming online and the next batch being killed during an ASG update.",
             "Type": "String"
-        },
-        "VpcId": {
-            "Description": "The ID of the VPC to attach the environment to",
-            "Type": "String"
         }
     },
     "Resources": {
-        "ScheduledActionDown": {
-            "Type": "AWS::AutoScaling::ScheduledAction",
-            "Properties": {
-                "AutoScalingGroupName": {
-                    "Ref": "ComponentAutoScalingGroup"
-                },
-                "MaxSize": "0",
-                "MinSize": "0",
-                "Recurrence": "0 17 * * *"
-            }
-        },
         "ComponentAutoScalingGroup": {
             "Properties": {
-                "AvailabilityZones": [
-                    "eu-west-1a",
-                    "eu-west-1b",
-                    "eu-west-1c"
-                ],
+                "DesiredCapacity": 0,
+                "HealthCheckGracePeriod": 0,
+                "HealthCheckType": "ELB",
                 "LaunchConfigurationName": {
                     "Ref": "ComponentLaunchConfiguration"
                 },
-                "MaxSize": {
-                    "Ref": "MaxSize"
-                },
-                "MinSize": {
-                    "Ref": "MinSize"
-                },
+                "LoadBalancerNames": [
+                    {
+                        "Ref": "ComponentElasticLoadBalancer"
+                    }
+                ],
+                "MaxSize": 2,
+                "MinSize": 0,
                 "Tags": [
                     {
                         "Key": "BBCProject",
                         "PropagateAtLaunch": true,
-                        "Value": "otgta-proto"
+                        "Value": "ugc-upload-test"
+                    },
+                    {
+                        "Key": "BBCComponent",
+                        "PropagateAtLaunch": true,
+                        "Value": "ugc-upload-load-test-component"
                     },
                     {
                         "Key": "BBCEnvironment",
@@ -121,7 +93,7 @@
                                     {
                                         "Ref": "Environment"
                                     },
-                                    "gtm-loadtest"
+                                    "ugc-upload-load-test-component"
                                 ]
                             ]
                         }
@@ -129,30 +101,109 @@
                 ],
                 "VPCZoneIdentifier": [
                     {
-                        "Ref": "PrivateSubnet1Id"
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${CoreInfrastructureStackName}-PrivateSubnet0"
+                        }
                     },
                     {
-                        "Ref": "PrivateSubnet2Id"
-                    },
-                    {
-                        "Ref": "PrivateSubnet3Id"
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${CoreInfrastructureStackName}-PrivateSubnet1"
+                        }
                     }
                 ]
             },
             "Type": "AWS::AutoScaling::AutoScalingGroup",
             "UpdatePolicy": {
                 "AutoScalingRollingUpdate": {
-                    "MaxBatchSize": {
-                        "Ref": "UpdateMaxBatchSize"
-                    },
-                    "MinInstancesInService": {
-                        "Ref": "UpdateMinInService"
-                    },
+                    "MaxBatchSize": 1,
+                    "MinInstancesInService": 0,
                     "PauseTime": {
                         "Ref": "UpdatePauseTime"
                     }
                 }
             }
+        },
+        "ComponentDNS": {
+            "Properties": {
+                "AliasTarget": {
+                    "DNSName": {
+                        "Fn::Join": [
+                            ".",
+                            [
+                                "dualstack",
+                                {
+                                    "Fn::GetAtt": [
+                                        "ComponentElasticLoadBalancer",
+                                        "DNSName"
+                                    ]
+                                }
+                            ]
+                        ]
+                    },
+                    "HostedZoneId": {
+                        "Fn::GetAtt": [
+                            "ComponentElasticLoadBalancer",
+                            "CanonicalHostedZoneNameID"
+                        ]
+                    }
+                },
+                "HostedZoneName": {
+                    "Ref": "DomainNameBase"
+                },
+                "Name": {
+                    "Fn::Join": [
+                        ".",
+                        [
+                            {
+                                "Ref": "CnameEntry"
+                            },
+                            {
+                                "Ref": "DomainNameBase"
+                            }
+                        ]
+                    ]
+                },
+                "Type": "A"
+            },
+            "Type": "AWS::Route53::RecordSet"
+        },
+        "ComponentElasticLoadBalancer": {
+            "Properties": {
+                "CrossZone": "true",
+                "HealthCheck": {
+                    "HealthyThreshold": "3",
+                    "Interval": "15",
+                    "Target": "HTTP:7080/status",
+                    "Timeout": "10",
+                    "UnhealthyThreshold": "3"
+                },
+                "Listeners": [
+                    {
+                        "InstancePort": "7443",
+                        "InstanceProtocol": "tcp",
+                        "LoadBalancerPort": "443",
+                        "Protocol": "tcp"
+                    }
+                ],
+                "SecurityGroups": [
+                    {
+                        "Ref": "LoadBalancerSecurityGroup"
+                    }
+                ],
+                "Subnets": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${CoreInfrastructureStackName}-PublicSubnet0"
+                        }
+                    },
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${CoreInfrastructureStackName}-PublicSubnet1"
+                        }
+                    }
+                ]
+            },
+            "Type": "AWS::ElasticLoadBalancing::LoadBalancer"
         },
         "ComponentInstanceProfile": {
             "Properties": {
@@ -174,20 +225,21 @@
                 "ImageId": {
                     "Ref": "ImageId"
                 },
+                "InstanceMonitoring": "false",
                 "InstanceType": {
                     "Ref": "InstanceType"
                 },
                 "KeyName": {
                     "Ref": "KeyName"
                 },
-                "AssociatePublicIpAddress": true,
-                "InstanceMonitoring":true,
                 "SecurityGroups": [
                     {
-                        "Ref": "ComponentSecurityGroup"
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${CoreInfrastructureStackName}-SSHFromBastionsSecGroup"
+                        }
                     },
                     {
-                        "Ref": "BastionAccessSecurityGroup"
+                        "Ref": "ComponentSecurityGroup"
                     }
                 ]
             },
@@ -256,16 +308,6 @@
             },
             "Type": "AWS::IAM::Role"
         },
-        "ComponentScalingPolicy": {
-            "Properties": {
-                "AdjustmentType": "ChangeInCapacity",
-                "AutoScalingGroupName": {
-                    "Ref": "ComponentAutoScalingGroup"
-                },
-                "ScalingAdjustment": "1"
-            },
-            "Type": "AWS::AutoScaling::ScalingPolicy"
-        },
         "ComponentSecurityGroup": {
             "Properties": {
                 "GroupDescription": "A component security group allowing access only from the respective ELB",
@@ -285,18 +327,12 @@
                             "Ref": "LoadBalancerSecurityGroup"
                         },
                         "ToPort": 7443
-                    },
-                    {
-                        "FromPort": 123,
-                        "IpProtocol": "udp",
-                        "SourceSecurityGroupId": {
-                            "Ref": "LoadBalancerSecurityGroup"
-                        },
-                        "ToPort": 123
                     }
                 ],
                 "VpcId": {
-                    "Ref": "VpcId"
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${CoreInfrastructureStackName}-VpcId"
+                    }
                 }
             },
             "Type": "AWS::EC2::SecurityGroup"
@@ -313,7 +349,9 @@
                     }
                 ],
                 "VpcId": {
-                    "Ref": "VpcId"
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${CoreInfrastructureStackName}-VpcId"
+                    }
                 }
             },
             "Type": "AWS::EC2::SecurityGroup"
