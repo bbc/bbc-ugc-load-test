@@ -1,5 +1,5 @@
 NAME=md-loadtest
-GATLING='https://repo1.maven.org/maven2/io/gatling/highcharts/gatling-charts-highcharts-bundle/2.1.7/gatling-charts-highcharts-bundle-2.1.7-bundle.zip'
+GATLING='https://repo1.maven.org/maven2/io/gatling/highcharts/gatling-charts-highcharts-bundle/3.0.0-RC4/gatling-charts-highcharts-bundle-3.0.0-RC4-bundle.zip'
 
 .PHONY: all
 all: RPMS
