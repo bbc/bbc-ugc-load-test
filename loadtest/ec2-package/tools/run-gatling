@@ -1,0 +1,36 @@
+#!/bin/bash
+TEST_ID=$1
+shift
+NUM_INSTANCES=$1
+shift
+set -eu
+
+LOG_DIR="/var/log/ltctl/gatling"
+
+# Min/max JVM heap size should be 60% of available system memory
+JVM_HEAP=$(grep MemTotal /proc/meminfo | awk '{ print int(($2 / 100) * 60)}')
+
+# Size of the JVM heap for the young generation should be half total heap
+JVM_YOUNG=$(( JVM_HEAP / 2 ))
+
+GAT_OPTS=""
+# Supress java.net.ConnectException: handshake alert:  unrecognized_name
+GAT_OPTS+=" -Djsse.enableSNIExtension=false"
+GAT_OPTS+=" -DnumEC2Instances=${NUM_INSTANCES}"
+# Stop Java's weird in memory DNS caching which prevents round robin DNS load
+# balancing (that the ELBs use). Note this doesn't disable OS DNS cachine.
+GAT_OPTS+=" -Dsun.net.inetaddr.ttl=0"
+GAT_OPTS+=" -DfailedReqLog=/var/log/ltctl/log/failed_req.${TEST_ID}.log"
+
+cd ~/gatling
+
+JAVA_OPTS=" -Xms${JVM_HEAP}k -Xmx${JVM_HEAP}k -Xmn${JVM_YOUNG}k ${GAT_OPTS}" \
+./bin/gatling.sh -nr \
+-rf "${LOG_DIR}/" \
+-on "$TEST_ID" \
+"$@"
+
+if ! ls "${LOG_DIR}/${TEST_ID}"* > /dev/null; then
+    echo "No ${LOG_DIR}/${TEST_ID}* dir, possible scenario error"
+    exit 1;
+fi

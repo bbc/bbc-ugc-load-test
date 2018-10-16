@@ -1,0 +1,15 @@
+Wed Nov 30 2016 Henry Rodrick <henry.rodrick@bbc.co.uk>
+    * MD-925: Temporarily use Oracle OpenJDK 8
+
+Thu Apr 21 2016 Alistair Wooldrige <alistair.wooldrige@bbc.co.uk>
+    * Warn on other people using the cluster
+    * Improve error output on CalledProcessException
+    * Add verbosity to SSH commands
+    * Stop sudo requiring a TTY
+
+Wed Apr 20 2016 Alistair Wooldrige <alistair.wooldrige@bbc.co.uk>
+    * Add --verbose option
+    * Implement retrying behaviour ourselves for better debug output :(
+
+Tue Apr 19 2016 Alistair Wooldrige <alistair.wooldrige@bbc.co.uk>
+    * MD-724: First version of ltctl

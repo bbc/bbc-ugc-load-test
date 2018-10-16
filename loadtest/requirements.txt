@@ -1,0 +1,8 @@
+docopt
+boto3
+requests
+retrying
+click
+pyopenssl
+tailer
+stopit

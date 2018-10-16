@@ -1,0 +1,322 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "This stack only spun up during a loadtest",
+    "Parameters": {
+        "BastionAccessSecurityGroup": {
+            "Description": "The security group that permits access from the bastions",
+            "Type": "String"
+        },
+        "Environment": {
+            "AllowedValues": [
+                "int",
+                "test",
+                "live"
+            ],
+            "Description": "The name of the environment.",
+            "Type": "String"
+        },
+        "ImageId": {
+            "Description": "The AMI to use for this component",
+            "Type": "String"
+        },
+        "InstanceType": {
+            "Default": "t2.micro",
+            "Description": "Type of EC2 instance",
+            "Type": "String"
+        },
+        "KeyName": {
+            "Description": "Name of existing EC2 keypair to enable SSH access to the created instances",
+            "Type": "String"
+        },
+        "MaxSize": {
+            "Default": "2",
+            "Description": "Maximum count of EC2 instances present",
+            "Type": "String"
+        },
+        "MinSize": {
+            "Default": "2",
+            "Description": "Minimum count of EC2 instances present",
+            "Type": "String"
+        },
+        "PrivateSubnet1Id": {
+            "Description": "The ID of private subnet 1",
+            "Type": "String"
+        },
+        "PrivateSubnet2Id": {
+            "Description": "The ID of private subnet 2",
+            "Type": "String"
+        },
+        "PrivateSubnet3Id": {
+            "Description": "The ID of private subnet 3",
+            "Type": "String"
+        },
+        "UpdateMaxBatchSize": {
+            "Default": "1",
+            "Description": "The maximum number of instances to be killed at one time during an ASG update.",
+            "Type": "String"
+        },
+        "UpdateMinInService": {
+            "Default": "0",
+            "Description": "The minimum number of instances in service during an ASG update",
+            "Type": "String"
+        },
+        "UpdatePauseTime": {
+            "Default": "PT0S",
+            "Description": "The time to wait between new instances coming online and the next batch being killed during an ASG update.",
+            "Type": "String"
+        },
+        "VpcId": {
+            "Description": "The ID of the VPC to attach the environment to",
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "ScheduledActionDown": {
+            "Type": "AWS::AutoScaling::ScheduledAction",
+            "Properties": {
+                "AutoScalingGroupName": {
+                    "Ref": "ComponentAutoScalingGroup"
+                },
+                "MaxSize": "0",
+                "MinSize": "0",
+                "Recurrence": "0 17 * * *"
+            }
+        },
+        "ComponentAutoScalingGroup": {
+            "Properties": {
+                "AvailabilityZones": [
+                    "eu-west-1a",
+                    "eu-west-1b",
+                    "eu-west-1c"
+                ],
+                "LaunchConfigurationName": {
+                    "Ref": "ComponentLaunchConfiguration"
+                },
+                "MaxSize": {
+                    "Ref": "MaxSize"
+                },
+                "MinSize": {
+                    "Ref": "MinSize"
+                },
+                "Tags": [
+                    {
+                        "Key": "BBCProject",
+                        "PropagateAtLaunch": true,
+                        "Value": "otgta-proto"
+                    },
+                    {
+                        "Key": "BBCEnvironment",
+                        "PropagateAtLaunch": true,
+                        "Value": {
+                            "Ref": "Environment"
+                        }
+                    },
+                    {
+                        "Key": "Name",
+                        "PropagateAtLaunch": true,
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "Environment"
+                                    },
+                                    "gtm-loadtest"
+                                ]
+                            ]
+                        }
+                    }
+                ],
+                "VPCZoneIdentifier": [
+                    {
+                        "Ref": "PrivateSubnet1Id"
+                    },
+                    {
+                        "Ref": "PrivateSubnet2Id"
+                    },
+                    {
+                        "Ref": "PrivateSubnet3Id"
+                    }
+                ]
+            },
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "UpdatePolicy": {
+                "AutoScalingRollingUpdate": {
+                    "MaxBatchSize": {
+                        "Ref": "UpdateMaxBatchSize"
+                    },
+                    "MinInstancesInService": {
+                        "Ref": "UpdateMinInService"
+                    },
+                    "PauseTime": {
+                        "Ref": "UpdatePauseTime"
+                    }
+                }
+            }
+        },
+        "ComponentInstanceProfile": {
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "ComponentRole"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::InstanceProfile"
+        },
+        "ComponentLaunchConfiguration": {
+            "Properties": {
+                "EbsOptimized": "false",
+                "IamInstanceProfile": {
+                    "Ref": "ComponentInstanceProfile"
+                },
+                "ImageId": {
+                    "Ref": "ImageId"
+                },
+                "InstanceType": {
+                    "Ref": "InstanceType"
+                },
+                "KeyName": {
+                    "Ref": "KeyName"
+                },
+                "AssociatePublicIpAddress": true,
+                "InstanceMonitoring":true,
+                "SecurityGroups": [
+                    {
+                        "Ref": "ComponentSecurityGroup"
+                    },
+                    {
+                        "Ref": "BastionAccessSecurityGroup"
+                    }
+                ]
+            },
+            "Type": "AWS::AutoScaling::LaunchConfiguration"
+        },
+        "ComponentPolicy": {
+            "Properties": {
+                "PolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": [
+                                "*"
+                            ]
+                        },
+                        {
+                            "Action": [
+                                "cloudwatch:*"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": [
+                                "*"
+                            ]
+                        },
+                        {
+                            "Action": [
+                                "ec2:Describe*"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": [
+                                "*"
+                            ]
+                        }
+                    ]
+                },
+                "PolicyName": "ComponentPolicy",
+                "Roles": [
+                    {
+                        "Ref": "ComponentRole"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::Policy"
+        },
+        "ComponentRole": {
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Path": "/"
+            },
+            "Type": "AWS::IAM::Role"
+        },
+        "ComponentScalingPolicy": {
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": {
+                    "Ref": "ComponentAutoScalingGroup"
+                },
+                "ScalingAdjustment": "1"
+            },
+            "Type": "AWS::AutoScaling::ScalingPolicy"
+        },
+        "ComponentSecurityGroup": {
+            "Properties": {
+                "GroupDescription": "A component security group allowing access only from the respective ELB",
+                "SecurityGroupIngress": [
+                    {
+                        "FromPort": 7080,
+                        "IpProtocol": "tcp",
+                        "SourceSecurityGroupId": {
+                            "Ref": "LoadBalancerSecurityGroup"
+                        },
+                        "ToPort": 7080
+                    },
+                    {
+                        "FromPort": 7443,
+                        "IpProtocol": "tcp",
+                        "SourceSecurityGroupId": {
+                            "Ref": "LoadBalancerSecurityGroup"
+                        },
+                        "ToPort": 7443
+                    },
+                    {
+                        "FromPort": 123,
+                        "IpProtocol": "udp",
+                        "SourceSecurityGroupId": {
+                            "Ref": "LoadBalancerSecurityGroup"
+                        },
+                        "ToPort": 123
+                    }
+                ],
+                "VpcId": {
+                    "Ref": "VpcId"
+                }
+            },
+            "Type": "AWS::EC2::SecurityGroup"
+        },
+        "LoadBalancerSecurityGroup": {
+            "Properties": {
+                "GroupDescription": "An ELB group allowing access only to from the corresponding component",
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 443,
+                        "IpProtocol": "tcp",
+                        "ToPort": 443
+                    }
+                ],
+                "VpcId": {
+                    "Ref": "VpcId"
+                }
+            },
+            "Type": "AWS::EC2::SecurityGroup"
+        }
+    }
+}

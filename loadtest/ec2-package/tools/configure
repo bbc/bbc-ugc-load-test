@@ -1,0 +1,162 @@
+#!/bin/bash
+set -eux
+
+exec 1>${HOME}/configure.log
+exec 2>&1
+
+GAT_DIR="${HOME}/gatling"
+LOG_DIR="/var/log/ltctl/"
+
+ensure_no_previous() {
+    if pkill 'run-gatling'; then
+        echo 'There were previous run-gatling.sh scripts to kill.'
+    fi
+    if pkill 'java'; then
+        echo 'There were previous java processes to kill.'
+    fi
+}
+
+clean_logdir() {
+    sudo rm -rf "$LOG_DIR"
+    sudo mkdir -p "${LOG_DIR}/gatling"
+    sudo mkdir -p "${LOG_DIR}/sar"
+    sudo chown -R "$USER" "$LOG_DIR"
+}
+
+set_ulimits() {
+    local file="/etc/security/limits.conf"
+    local hard="* hard nofile 65535"
+    local soft="* soft nofile 65535"
+
+    grep "$hard" "$file" || sudo sh -c "echo \"$hard\" >> \"$file\""
+    grep "$soft" "$file" || sudo sh -c "echo \"$soft\" >> \"$file\""
+}
+
+copy_gatling() {
+    # I used many combinations of gatling command line arguments (-bf/-sf) but
+    # couldn't get Gatling to write compiled simulations to anything but
+    # $GATLING_HOME/target.  Gave up and just doing this for now.
+
+    rm -rf "$GAT_DIR"
+    mkdir "$GAT_DIR"
+    cd "$GAT_DIR"
+
+    # No, Gatling won't deal with symlinks either...
+    sudo cp -al /opt/gatling/{bin,lib,LICENSE} .
+    mkdir -p user-files/simulations conf
+    cp -al ~/ec2-package/scenarios/* user-files/simulations/
+    cp -al ~/ec2-package/conf/* conf/
+    sudo chown -R "$USER" ./
+    cd -
+}
+
+# Workaround for Centos 7.2 openjdk packaging bug (see MD-925)
+# Should be removed when we move to Centos 7.3
+install_oracle_jdk() {
+    curl -sL --header \
+        "Cookie: gpw_e24=http%3A%2F%2Fwww.oracle.com%2F; oraclelicense=accept-securebackup-cookie" \
+        http://download.oracle.com/otn-pub/java/jdk/8u131-b11/d54c1d3a095b4ff2b6607d096fa80163/jre-8u131-linux-x64.rpm \
+        -o /tmp/jre-8u131-linux-x64.rpm
+    sudo yum localinstall -y /tmp/jre-8u131-linux-x64.rpm
+    sudo alternatives --set java /usr/java/jre1.8.0_131/bin/java
+}
+
+kernel_tuning() {
+    sudo bash -c "cat > /etc/sysctl.conf" << EOL
+net.ipv4.tcp_max_syn_backlog = 40000
+net.core.somaxconn = 40000
+net.core.wmem_default = 8388608
+net.core.rmem_default = 8388608
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_moderate_rcvbuf = 1
+net.core.rmem_max = 134217728
+net.core.wmem_max = 134217728
+net.ipv4.tcp_mem  = 134217728 134217728 134217728
+net.ipv4.tcp_rmem = 4096 277750 134217728
+net.ipv4.tcp_wmem = 4096 277750 134217728
+net.core.netdev_max_backlog = 300000
+EOL
+    sudo sysctl --system
+
+}
+
+setup_monitoring() {
+    sudo bash -c "cat > /etc/stunnel/stunnel.conf" << EOL
+sslVersion = TLSv1.2
+options = NO_SSLv2
+options = NO_SSLv3
+
+fips = no
+
+pid = /var/run/stunnel.pid
+
+debug = 7
+output = /var/log/stunnel.log
+retry = yes
+
+socket = l:TCP_NODELAY=1
+socket = r:TCP_NODELAY=1
+
+delay = yes
+
+[carbonOutgoingConnections]
+client = yes
+cert = /etc/pki/tls/certs/client.crt
+key = /etc/pki/tls/private/client.key
+CAfile = /etc/pki/cosmos/current/service.crt
+CRLpath = /etc/crl
+accept = 2003
+connect = gtm-graphite.test.tools.bbc.co.uk:3002
+verify = 2
+EOL
+    sudo bash -c "cat > /etc/collectd.d/gatling.conf" << EOL
+LoadPlugin logfile
+<Plugin logfile>
+        LogLevel info
+        File "/var/log/collectd.log"
+        Timestamp true
+</Plugin>
+
+LoadPlugin write_graphite
+<Plugin write_graphite>
+    <Node "gatling">
+        Host "localhost"
+        Port "2003"
+        Protocol "tcp"
+        ReconnectInterval 0
+        LogSendErrors true
+        Prefix "gatling.system."
+        #Postfix "collectd"
+        StoreRates true
+        AlwaysAppendDS false
+        EscapeCharacter "_"
+        SeparateInstances false
+        PreserveSeparator true
+        DropDuplicateFields false
+    </Node>
+</Plugin>
+
+LoadPlugin tcpconns
+<Plugin "tcpconns">
+  ListeningPorts true
+</Plugin>
+
+LoadPlugin uptime
+EOL
+    sudo systemctl enable stunnel
+    sudo systemctl enable collectd
+    sudo systemctl restart stunnel
+    sudo systemctl restart collectd
+    HOSTNAME=$(hostname) && sed -i.bak "s/{HOSTNAME}/${HOSTNAME}/" ~/gatling/conf/gatling.conf
+}
+ensure_no_previous
+clean_logdir
+set_ulimits
+copy_gatling
+install_oracle_jdk
+kernel_tuning
+setup_monitoring

@@ -1,0 +1,24 @@
+#!/bin/bash
+TEST_ID=$1
+shift
+set -eu
+
+LOG_DIR="/var/log/ltctl/sar"
+
+background_sar() {
+    local interval=$1
+    local dump_f="${LOG_DIR}/${TEST_ID}.sar.sa"
+    sar -o "$dump_f" "$interval" >/dev/null 2>&1 &
+}
+
+loadavg_print() {
+    local interval=$1
+    while true; do
+        cut -d' ' -f 1 /proc/loadavg
+        sleep 1
+    done
+}
+
+trap 'jobs -p | xargs kill' SIGINT SIGTERM SIGHUP
+background_sar 10
+loadavg_print 1
