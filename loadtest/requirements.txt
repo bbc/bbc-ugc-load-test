@@ -6,3 +6,4 @@ click
 pyopenssl
 tailer
 stopit
+jsonpickle

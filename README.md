@@ -1,7 +1,7 @@
 # Running load tests
 ### Prerequisites
  * Use your Mac, not the sandbox.
- * Update to python version >= 2.7.9. You can check you current version with
+ * Update to python version >= 3.4.5 You can check you current version with
    `python -V` and either install/upgrade with `brew install python` or `brew
    upgrade python`
  * Change into the `loadtest/` directory: `cd loadtest/`.

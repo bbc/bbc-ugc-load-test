@@ -36,19 +36,20 @@ Examples:
         ./ltctl genreport "<id>"
 """
 
+import botocore
 from boto3 import client
 from boto3.s3.transfer import S3Transfer
-from botocore.exceptions import NoCredentialsError, ClientError
+from botocore.exceptions import NoCredentialsError, ClientError, WaiterError
 from click import echo as e
 from click import getchar, style, progressbar
-from ConfigParser import SafeConfigParser
+from configparser import SafeConfigParser
 from contextlib import contextmanager
 from curses import A_BOLD, A_DIM
-from curses.wrapper import wrapper
+from curses import wrapper
 from datetime import datetime
 from docopt import docopt
 from functools import wraps
-from itertools import izip
+
 from mimetypes import guess_type
 from multiprocessing.dummy import Pool as ThreadPool
 from OpenSSL.crypto import Error, FILETYPE_PEM, load_certificate
@@ -65,10 +66,14 @@ from tempfile import TemporaryFile
 from time import sleep
 from traceback import format_exc
 
+import pprint
+import json
+import jsonpickle
+from cosmosTroposphere import CosmosTemplate
 
 verbose = False
 config = SafeConfigParser()
-config.read(['ltctl.default.conf', 'ltctl.local.conf'])
+config.read(['ltctl.local.conf'])
 
 cache = {}
 
@@ -133,7 +138,27 @@ def bork(msg):
     e(style(msg, fg='red'), err=True)
     exit(1)
 
+def stack_creation_on_exception(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        try:
+                p_dot()
+                r = f(*args, **kwargs)
+                p_done()
+                return r
 
+        except ClientError as e:
+            print(str(e))
+            return None
+        except WaiterError as e:
+            response = client.describe_stacks(StackName=stackId)
+            print(str(response))
+            bork("\n\nProblem waiting for stack to be created: {0}".format(last_exception))
+            sleep(2)
+    return wrapped
+
+
+    
 def retry_on_exception(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
@@ -271,7 +296,7 @@ def close_ssh(s):
                 s['process'].kill()
             attempt += 1
             sleep(1)
-        except OSError, e:
+        except OSError as e:
             # Only allow OSError: [Errno 3] No such process
             if e.errno != 3:
                 p_verbose("[errno 3] No SSH con to: {0}".format(s['ip']))
@@ -286,7 +311,7 @@ def close_ssh(s):
 def mkdir_p(path, *args, **kwargs):
     try:
         return makedirs(path, *args, **kwargs)
-    except OSError, e:
+    except OSError as e:
         if e.errno != 17:
             raise
 
@@ -321,9 +346,9 @@ def from_stack_params(old_params):
 
 def to_stack_params(p):
     new_vals = [{'ParameterKey': k, 'ParameterValue': v}
-                for k, v in p.iteritems() if v is not None]
+                for k, v in p.items() if v is not None]
     old_vals = [{'ParameterKey': k, 'UsePreviousValue': True}
-                for k, v in p.iteritems() if v is None]
+                for k, v in p.items() if v is None]
     return old_vals + new_vals
 
 
@@ -348,6 +373,77 @@ def get_asg():
     return asg
 
 
+def generate_stack_template():
+    t = CosmosTemplate(total_az=2,region=conf("region"),description="UgcUpload loadtest", component_name="ugc-upload-load-test-component", project_name='ugc-upload-test')
+
+    componentAutoScalingGroup = t.resources['ComponentAutoScalingGroup']
+    componentAutoScalingGroup.DesiredCapacity = 0
+    componentAutoScalingGroup.HealthCheckGracePeriod = 0
+    
+    del t.parameters["DesiredCapacity"]
+    del t.parameters["ElbHealthCheckGracePeriod"]
+
+    updateMaxBatchSize = t.parameters["UpdateMaxBatchSize"]
+    updateMaxBatchSize.Default = "0"
+
+    updateMinInService = t.parameters["UpdateMinInService"]
+    updateMinInService.Default = "0"
+
+    ami_id = t.parameters['ImageId']
+    ami_id.Default = 'ami-0e8fb02fa7ec321b6'
+
+    cNameEntryParameter = t.parameters['CnameEntry']
+    cNameEntryParameter.Default ='ugc-loadtest.int'
+
+    domainNameBase = t.parameters['DomainNameBase']
+    domainNameBase.Default = 'c7dff5ab13c48206.xhst.bbci.co.uk.'
+
+    environment = t.parameters['Environment']
+    environment.Default = 'int'
+
+    maxSize = t.parameters["MaxSize"]
+    maxSize.Default = "2"
+
+    minSize = t.parameters["MinSize"]
+    minSize.Default = "0"
+
+    updatePauseTime = t.parameters["UpdatePauseTime"]
+    updatePauseTime.Default = "PTOS"
+
+    return t.to_json()
+
+def create_stack(num, type=None):
+    cfn_client = get_client('cloudformation')
+    
+    response = cfn_client.create_stack(
+        StackName=conf('stack_name'),
+        Capabilities=['CAPABILITY_NAMED_IAM'],
+        TemplateBody=generate_stack_template(),
+        Parameters=to_stack_params({
+            'CnameEntry': 'ugc-loadtest.int',
+            'CoreInfrastructureStackName': 'core-infrastructure',
+            'DomainNameBase': 'c7dff5ab13c48206.xhst.bbci.co.uk.',
+            'Environment': 'int',
+            'InstanceType' : 't2.micro',
+            'KeyName' : 'cosmos',
+            'MaxSize': '2',
+            'MinSize' : '0',
+            'DesiredCapacity': '0',
+            'UpdateMaxBatchSize' : '1',
+            'UpdateMinInService' : '0'}),
+        OnFailure='ROLLBACK'
+    )
+
+    @staack_creation_on_exception
+    def _block_until_stack_stable():
+        status = describe_stack()['StackStatus']
+        must_eql(status, 'CREATE_COMPLETE', 'stack status')
+
+
+    sleep(1)
+    _block_until_stack_stable()
+        
+    
 def set_instances(num, type=None):
     cfn_client = get_client('cloudformation')
     p_task("Updating stack to set '{0}' instances of '{1}'".format(num, type))
@@ -361,20 +457,21 @@ def set_instances(num, type=None):
         UsePreviousTemplate=True,
         Capabilities=['CAPABILITY_IAM'],
         Parameters=to_stack_params({
+            'CnameEntry': None,
+            'CoreInfrastructureStackName': None,
+            'DomainNameBase': None,
             'MinSize': str(num),
             'MaxSize': str(num),
+            'DesiredCapacity': str(num),
+            'Environment': None,
+            'ImageId': None,
             'InstanceType': type,
             'UpdateMinInService': '0',
-            'BastionAccessSecurityGroup': None,
+
             'Environment': None,
             'ImageId': None,
             'KeyName': None,
-            'PrivateSubnet1Id': None,
-            'PrivateSubnet2Id': None,
-            'PrivateSubnet3Id': None,
-            'UpdateMaxBatchSize': None,
-            'UpdatePauseTime': None,
-            'VpcId': None
+            'UpdateMaxBatchSize':'1'
         }))
     p_done()
 
@@ -412,7 +509,7 @@ def check_asg_not_in_use():
     if others:
         e("The cluster already has '{0}' instances running. In use by:".format(
             len(instances)))
-        map(p_bullet, others)
+        list(map(p_bullet, others))
         if not prompt_yes('Proceed even though cluster may be in use?'):
             bork('Exiting on user request')
 
@@ -517,7 +614,7 @@ def run_gatling(scenario, test_id):
             scr.addstr('Running gatling scenario: ' + scenario +
                        '. CTRL-C to abort' + dots)
             dots = dots + '.' if len(dots) < 3 else ''
-            for c, m in izip(gatling_ttys, loadavg_ttys):
+            for c, m in zip(gatling_ttys, loadavg_ttys):
                 status = 'running' if c['process'].poll() is None else 'done'
                 load = tail(m['stdout_read'], 1)
                 load = load[0].strip() if load else '?'
@@ -550,8 +647,8 @@ def run_gatling(scenario, test_id):
         kill_test()
         p_complete()
         p_task('Closing SSH connections')
-        map(close_ssh, loadavg_ttys)
-        map(close_ssh, gatling_ttys)
+        list(map(close_ssh, loadavg_ttys))
+        list(map(close_ssh, gatling_ttys))
         p_done()
         p_kv('Full gatling terminal stdout/stderr log', run_d)
         p_kv('Run report generation manually using',
@@ -559,20 +656,20 @@ def run_gatling(scenario, test_id):
         bork('Test aborted.')
 
     p_task('Closing SSH connections used for monitoring')
-    map(close_ssh, loadavg_ttys)
+    list(map(close_ssh, loadavg_ttys))
     p_done()
     p_complete()
     for c in gatling_ttys:
         if c['process'].returncode != 0:
             e('ERROR: Gatling on ' + c['ip'])
             e('\nLast 20 lines in stdout:')
-            map(p_quote, tail(c['stdout_read'], 20))
+            list(map(p_quote, tail(c['stdout_read'], 20)))
             e('\nLast 20 lines in stderr:')
-            map(p_quote, tail(c['stderr_read'], 20))
+            list(map(p_quote, tail(c['stderr_read'], 20)))
             p_kv('\nFull gatling terminal stdout/stderr log', run_d)
             bork('Gatling error above ^^^.')
     p_task('Closing SSH connections used for gatling')
-    map(close_ssh, gatling_ttys)
+    list(map(close_ssh, gatling_ttys))
     p_done()
 
 
@@ -635,7 +732,7 @@ def gen_report(test_id):
     sar_d = join(data_dir, test_id, 'sar_data')
     failed_req_d = join(data_dir, test_id, 'failed_request_logs')
     archive_d = join(results_d, 'archive')
-    map(mkdir_p, [results_d, sim_log_d, sar_d, failed_req_d, archive_d])
+    list(map(mkdir_p, [results_d, sim_log_d, sar_d, failed_req_d, archive_d]))
 
     instances = get_instances()
     with progressbar([i['private_ip_address'] for i in instances],
@@ -751,7 +848,7 @@ def preflight_checks():
     p_task('Testing access to cosmos and AWS APIs')
     try:
         get_email_address()
-    except IOError, e:
+    except IOError as e:
         if e.errno == 2:
             bork('Certificate configured in lctcl.{default,local}.conf ' +
                  'does not exist.')
@@ -764,10 +861,10 @@ def preflight_checks():
     except NoCredentialsError:
         bork('AWS credentials not found. ' +
              'Have they been configured in ~/.aws/credentials ?')
-    except ClientError:
+    except ClientError as e:
         bork('ClientError when contacting AWS. ' +
              'Has the wrong account been configured in ~/.aws/credentials, ' +
-             'or the incorrect stack name configured?')
+             'or the incorrect stack name configured? '+str(e))
     p_done()
 
 
@@ -783,7 +880,7 @@ if __name__ == '__main__':
         check_asg_not_in_use()
         num_instances = int(args['--number'])
         set_instances(num_instances, args['--type'])
-        with progressbar(range(20),
+        with progressbar(list(range(20)),
                          label='Allowing time for sshd to start') as seconds:
             for _ in seconds:
                 sleep(1)
