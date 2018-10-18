@@ -22,7 +22,7 @@ object Login {
       .post("https://account.test.bbc.com/signin")
       .header(HttpHeaderNames.ContentType, HttpHeaderValues.ApplicationFormUrlEncoded)
       .formParam("username", "ugc-under13-testuser1")
-      .formParam("password", "test4656")
+      .formParam("password", "xxx")
       .check(status.in(400, 500)))
     .exec(http("get_session_info")
       .get("https://session.test.bbc.co.uk/session"))
