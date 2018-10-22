@@ -1,5 +1,5 @@
 Name: ugc-loadtest
-Version: 0.0.1
+Version: 0.0.2
 Release: 1%{?dist}
 Group: Development/Tools
 License: Internal BBC use only
