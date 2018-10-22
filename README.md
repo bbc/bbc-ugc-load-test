@@ -39,23 +39,23 @@ aws_secret_access_key = <YOUR_SECRET>
 ### Running a load test
 ```shell
 # Provision infrastructure
-./ltctl spinup -n 2 -t m4.large
+./ltctl.py spinup -n 2 -t m4.large
 
 # View infrastructure status
-./ltctl status
+./ltctl.py status
 
 # Run the load test described in ./ec2-package/scenarios/gtm/milestone1/GTMAvailabilityAll.scala
-./ltctl run gtm.GTMAvailabilityAll
+./ltctl.py run ugc.UGCBasicSimulation
 
 # After running the GTMAvailabilityAll loadtest run report generation manually 
 # (You will be prompted after running the loadtest)
-./ltctl genreport "CCYY-MM-DD.HH-mm-ss.GTMAvailabiliyAll"
+./ltctl.py genreport "CCYY-MM-DD.HH-mm-ss.GTMAvailabiliyAll"
 
 # Up generated report to S3 bucket 
-./ltctl uploadreport "CCYY-MM-DD.HH-mm-ss.GTMAvailabiliyAll"
+./ltctl.py uploadreport "CCYY-MM-DD.HH-mm-ss.GTMAvailabiliyAll"
 
 # Tear down infrastructure
-./ltctl spindown
+./ltctl.py spindown
 
 # GTM specific (wraps ltctl run command)
 make <test type>
@@ -79,7 +79,7 @@ utilities such as lsof/iptraf.
 
 ### Infrastructure
 The main
-[int-md-loadtest-infrastructure](https://admin.live.bbc.co.uk/cosmos/env/int/component/md-loadtest/stacks)
+[int-md-loadtest-infrastructure](https://admin.live.bbc.co.uk/cosmos/env/int/component/ugc-loadtest/stacks)
 stack contains an AutoScaling group that is only used during a load test. At
 all other times there should be no instances in service.
 
