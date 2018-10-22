@@ -1,5 +1,5 @@
 Name: ugc-loadtest
-Version: 0.0.3
+Version: 0.0.2
 Release: 1%{?dist}
 Group: Development/Tools
 License: Internal BBC use only
@@ -23,7 +23,7 @@ Requires: lsof
 Requires: mtr
 Requires: sysstat
 Requires: strace
-# Requires: stunnel
+Requires: stunnel
 Requires: tcpdump
 Requires: tmux
 Requires: unzip
@@ -56,8 +56,8 @@ mkdir -p $RPM_BUILD_ROOT/opt
 cp -R ./gatling $RPM_BUILD_ROOT/opt/
 
 %pre
-#getent group stunnel >/dev/null || groupadd -r stunnel
-#getent passwd stunnel >/dev/null || useradd -r -g stunnel -G stunnel -d / -s /sbin/nologin -c "stunnel" stunnel
+getent group stunnel >/dev/null || groupadd -r stunnel
+getent passwd stunnel >/dev/null || useradd -r -g stunnel -G stunnel -d / -s /sbin/nologin -c "stunnel" stunnel
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -66,9 +66,9 @@ rm -rf $RPM_BUILD_ROOT
 ###############################################################################
 #                PACKAGE FILE/DIRECTORY LISTING AND ATTRIBUTES                #
 ###############################################################################
-# %files
-#%attr(0640,root,root) /usr/lib/systemd/system/stunnel.service
-%defattr(644, root, root, 755)
+%files
+%attr(0640,root,root) /usr/lib/systemd/system/stunnel.service
+# %defattr(644, root, root, 755)
 %dir /opt/gatling
 /opt/gatling/LICENSE
 /opt/gatling/conf
