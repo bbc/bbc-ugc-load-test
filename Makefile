@@ -19,5 +19,6 @@ SOURCES: $(shell find src/ -type f)
 
 RPMS: SOURCES $(shell find SPECS/ -type f)
 	@ rm -rf RPMS && mkdir RPMS
-	mbt --redhatrelease=7
+        mock-build --os 7
+       cosmos-release service ugc-loadtest RPMS/*.rpm
 
