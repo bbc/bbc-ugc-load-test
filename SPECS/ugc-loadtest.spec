@@ -1,6 +1,6 @@
 Name: ugc-loadtest
 Version: 0.0.3
-Release: 1%{?dist}
+Release: %{?build_number}%{?dist}
 Group: Development/Tools
 License: Internal BBC use only
 Summary: Useful base tools for Gatling load tests, usually against croupier
