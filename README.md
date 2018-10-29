@@ -27,14 +27,45 @@ results_bucket=gtm-load-tests
 cosmos=https://api.live.bbc.co.uk/cosmos/env/int/component/gtm-loadtest
 
 ```
- * Generate AWS access keys for your IAM user in *otg-md-dev* account, then
- place the credentials in `~/.aws/credentials`, in the format:
-```dosini
-[default]
-aws_access_key_id = <YOUR_KEY>
-aws_secret_access_key = <YOUR_SECRET>
+ * Generate AWS access keys
+```shell
+# Worm hole credentials. e.g fetch-aws-creds.py 546933502184
+fetch-aws-creds.py <aws_account_id>
+# In the file ~/.aws/credentials make sure the region is set correctly. e.g eu-west-2
+
 ```
 
+### Environment Preparation
+```shell
+
+# Create stack
+./ltctl.py createstack
+
+# Delete stack
+./ltctl.py deletestack
+
+# Copy cert to instance
+./ltctl.py cert
+
+# deploy to int
+./ltctl.py release
+
+# Describe the stack
+./ltclt.py describestack
+
+# Get simulation files
+./ltclt.py prepare
+
+# Create restricted bandwidth:
+# maxbandwidth: The maximum bandwidth
+# bandwidthclass: The bandwidth which will be used by the test
+# bandwidthdefaultcalss: The rest of t
+#
+# To cause test to use 1500kb bandwidth on port 91
+./ltctl.py bandwidth 3000 1500 2500 91
+./ltclt.py bandwidth <maxbandwidth> <bandwidthclass> <bandwidthdefaultclass> <port>
+
+```
 
 ### Running a load test
 ```shell
@@ -44,21 +75,19 @@ aws_secret_access_key = <YOUR_SECRET>
 # View infrastructure status
 ./ltctl.py status
 
-# Run the load test described in ./ec2-package/scenarios/gtm/milestone1/GTMAvailabilityAll.scala
+# Run the load test described in ./ec2-package/scenarios/ugc/UGCBasicSimulation.scala
 ./ltctl.py run ugc.UGCBasicSimulation
 
-# After running the GTMAvailabilityAll loadtest run report generation manually 
+# After running the loadtest run report generation manually 
 # (You will be prompted after running the loadtest)
-./ltctl.py genreport "CCYY-MM-DD.HH-mm-ss.GTMAvailabiliyAll"
+./ltctl.py genreport
 
 # Up generated report to S3 bucket 
-./ltctl.py uploadreport "CCYY-MM-DD.HH-mm-ss.GTMAvailabiliyAll"
+./ltctl.py uploadreport
 
 # Tear down infrastructure
 ./ltctl.py spindown
 
-# GTM specific (wraps ltctl run command)
-make <test type>
 
 ```
 
@@ -76,36 +105,9 @@ Crack open `loadtest/ec2-package/conf/logback.xml` and change
 The RPM (crudely) packages gatling under `/opt/gatling` and also installs
 utilities such as lsof/iptraf.
 
-
 ### Infrastructure
 The main
-[int-md-loadtest-infrastructure](https://admin.live.bbc.co.uk/cosmos/env/int/component/ugc-loadtest/stacks)
+[int-ugc-loadtest-infrastructure](https://admin.live.bbc.co.uk/cosmos/env/int/component/ugc-loadtest/stacks)
 stack contains an AutoScaling group that is only used during a load test. At
 all other times there should be no instances in service.
-
-Note that you will need the [Cosmos
-Troposhere](https://github.com/bbc/cosmos-troposphere/) library to build the
-templates within `infrastructure/`
-
-### Gatling Carbon Server 
-To change the host where the Carbon server is located
-Crack open `loadtest/ec2-package/conf/gatling.conf` and change
-```
- graphite {
-      --snip--
-      host = "gtm-graphite-internal.test.api.bbci.co.uk"
-      --snip--
-    }
-```
-And then crack open `loadtest/ec2-package/tools/configure` and change
-```
-LoadPlugin write_graphite
-<Plugin write_graphite>
-    <Node "gatling">
-        Host "gtm-graphite-internal.test.api.bbci.co.uk"
-        --snip--
-    </Node>
-</Plugin>
-```
-
 
