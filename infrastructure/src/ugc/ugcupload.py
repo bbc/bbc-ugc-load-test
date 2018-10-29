@@ -19,7 +19,7 @@ class TemplateBuilder:
         # updatemininservice.Default = "0"
 
         ami_id = t.parameters['ImageId']
-        ami_id.Default = 'ami-0bd30028daba66ceb'
+        ami_id.Default = 'ami-09fd46debba20791d'
 
         cNameentryparameter = t.parameters['CnameEntry']
         cNameentryparameter.Default = 'ugc-loadtest.int'
