@@ -1034,8 +1034,6 @@ if __name__ == '__main__':
     verbose = args['--verbose']
 
     if args['fetchdependencies']:
-        email = get_email_address()
-        print(email)
         fetch_dependencies()
 
     if args['cert']:
@@ -1091,13 +1089,14 @@ if __name__ == '__main__':
         preflight_checks()
         spath = join('ec2-package', 'scenarios')
         spath = join(spath, *args['<scenario>'].split('.')) + '.scala'
+        update_test_files()
 
         # This abomination is to work around case-aware HFS
         if basename(spath) not in listdir(dirname(spath)) or not isfile(spath):
             bork('Could not find Gatling scenario: ' + spath)
 
         check_asg_not_in_use()
-        update_test_files()
+
         cosmos_login()
         configure_machines()
         fetch_dependencies()
