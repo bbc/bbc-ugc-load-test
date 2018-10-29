@@ -7,6 +7,13 @@ exec 2>&1
 GAT_DIR="${HOME}/gatling"
 LOG_DIR="/var/log/ltctl/"
 
+setup_aws_cli() {
+ sudo yum --enablerepo=extras install epel-release -y
+ sudo yum update -y
+ sudo yum install -y python-pip
+ sudo pip install awscli --upgrade
+}
+
 ensure_no_previous() {
     if pkill 'run-gatling'; then
         echo 'There were previous run-gatling.sh scripts to kill.'
@@ -46,6 +53,11 @@ copy_gatling() {
     mkdir -p user-files/simulations conf
     cp -al ~/ec2-package/scenarios/* user-files/simulations/
     cp -al ~/ec2-package/conf/* conf/
+
+    # Syncing the test data 
+    mkdir -p user-files/data
+    aws s3 sync s3://ugc-test-data/tests user-files/data
+    
     sudo chown -R "$USER" ./
     cd -
 }
@@ -84,79 +96,10 @@ EOL
 
 }
 
-setup_monitoring() {
-    sudo bash -c "cat > /etc/stunnel/stunnel.conf" << EOL
-sslVersion = TLSv1.2
-options = NO_SSLv2
-options = NO_SSLv3
-
-fips = no
-
-pid = /var/run/stunnel.pid
-
-debug = 7
-output = /var/log/stunnel.log
-retry = yes
-
-socket = l:TCP_NODELAY=1
-socket = r:TCP_NODELAY=1
-
-delay = yes
-
-[carbonOutgoingConnections]
-client = yes
-cert = /etc/pki/tls/certs/client.crt
-key = /etc/pki/tls/private/client.key
-CAfile = /etc/pki/cosmos/current/service.crt
-CRLpath = /etc/crl
-accept = 2003
-connect = gtm-graphite.test.tools.bbc.co.uk:3002
-verify = 2
-EOL
-    sudo bash -c "cat > /etc/collectd.d/gatling.conf" << EOL
-LoadPlugin logfile
-<Plugin logfile>
-        LogLevel info
-        File "/var/log/collectd.log"
-        Timestamp true
-</Plugin>
-
-LoadPlugin write_graphite
-<Plugin write_graphite>
-    <Node "gatling">
-        Host "localhost"
-        Port "2003"
-        Protocol "tcp"
-        ReconnectInterval 0
-        LogSendErrors true
-        Prefix "gatling.system."
-        #Postfix "collectd"
-        StoreRates true
-        AlwaysAppendDS false
-        EscapeCharacter "_"
-        SeparateInstances false
-        PreserveSeparator true
-        DropDuplicateFields false
-    </Node>
-</Plugin>
-
-LoadPlugin tcpconns
-<Plugin "tcpconns">
-  ListeningPorts true
-</Plugin>
-
-LoadPlugin uptime
-EOL
-    sudo systemctl enable stunnel
-    sudo systemctl enable collectd
-    sudo systemctl restart stunnel
-    sudo systemctl restart collectd
-    HOSTNAME=$(hostname) && sed -i.bak "s/{HOSTNAME}/${HOSTNAME}/" ~/gatling/conf/gatling.conf
-}
+setup_aws_cli
 ensure_no_previous
 clean_logdir
 set_ulimits
 copy_gatling
 install_oracle_jdk
 kernel_tuning
-setup_monitoring

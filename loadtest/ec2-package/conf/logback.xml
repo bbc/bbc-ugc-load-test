@@ -31,14 +31,22 @@
     </appender>
 
     <!-- Log ONLY FAILED HTTP request and responses -->
+   <!--
     <logger name="io.gatling.http.ahc" additivity="false" level="DEBUG">
         <appender-ref ref="ERROR_LOG" />
     </logger>
     <logger name="io.gatling.http.response" additivity="false" level="DEBUG">
         <appender-ref ref="ERROR_LOG" />
     </logger>
+   -->
 
-    <root level="ERROR">
+    <!-- Uncomment for logging ALL HTTP request and responses -->
+    <logger name="io.gatling.http.ahc" level="TRACE" />
+    <logger name="io.gatling.http.response" level="TRACE" />
+    <!-- Uncomment for logging ONLY FAILED HTTP request and responses -->
+    <logger name="io.gatling.http.ahc" level="TRACE" /> -->
+    <logger name="io.gatling.http.response" level="TRACE" /> -->
+    <root level="TRACE">
         <appender-ref ref="CONSOLE" />
     </root>
 
