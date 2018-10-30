@@ -4,6 +4,13 @@
  * Update to python version >= 3.4.5 You can check you current version with
    `python -V` and either install/upgrade with `brew install python` or `brew
    upgrade python`
+ * Create virtual environment
+   ```
+    sudo yum install python34-devel libcurl-devel
+    sudo pip3.4 install virtualenv
+    python3.4 -m virtualenv ~/loadtest
+    source ~/loadtest/bin/activate
+    ```
  * Change into the `loadtest/` directory: `cd loadtest/`.
  * You may (probably do) want to create a virtual environment and install pips requirements there
     * Ensure python `pip` is installed on your machine and install the
