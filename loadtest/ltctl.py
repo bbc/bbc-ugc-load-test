@@ -3,7 +3,7 @@
 
 Usage:
     ./ltctl.py spinup [-n <num>] [-t <type>] [-v]
-    ./ltctl.py run <scenario> [-v]
+    ./ltctl.py run <scenario> [-t <type>] [-v]
     ./ltctl.py genreport [-v]
     ./ltctl.py uploadreport [-v]
     ./ltctl.py spindown [-v]
@@ -262,8 +262,9 @@ def run(cmd, **kwargs):
     out += "\n".join(['   > ' + l for l in stdout.splitlines()])
     out += '\nProcess stderr:\n'
     out += "\n".join(['   > ' + l for l in stderr.splitlines()])
+
     p_verbose(out)
-    if retcode:
+    if retcode > 1:
         raise CalledProcessError(retcode, cmd, out)
     return stdout, stderr
 
@@ -341,138 +342,6 @@ def cd(path):
         yield
     finally:
         chdir(previous_d)
-
-
-###############################################################################
-# CFN STACK TOOLS
-###############################################################################
-def from_stack_params(old_params):
-    new_p = {}
-    for p in old_params:
-        new_p[p['ParameterKey']] = p['ParameterValue']
-    return new_p
-
-
-def to_stack_params(p):
-    new_vals = [{'ParameterKey': k, 'ParameterValue': v}
-                for k, v in p.items() if v is not None]
-    old_vals = [{'ParameterKey': k, 'UsePreviousValue': True}
-                for k, v in p.items() if v is None]
-    return old_vals + new_vals
-
-
-def describe_stack():
-    client = get_client('cloudformation')
-    stack_name = conf('stack_name')
-    p_verbose("Asking CFN for stack info on: {0}".format(stack_name))
-    return client.describe_stacks(StackName=stack_name)['Stacks'][0]
-
-
-def get_asg():
-    cfn_client = get_client('cloudformation')
-    p_verbose("Asking CFN for PhysicalResourceId")
-    asg_name = cfn_client.describe_stack_resource(
-        StackName=conf('stack_name'),
-        LogicalResourceId='ComponentAutoScalingGroup'
-    )['StackResourceDetail']['PhysicalResourceId']
-    asg_client = get_client('autoscaling')
-    p_verbose("Asking ASG for info on: {0}".format(asg_name))
-    asg = asg_client.describe_auto_scaling_groups(
-        AutoScalingGroupNames=[asg_name])['AutoScalingGroups'][0]
-    return asg
-
-
-def generate_stack_template():
-    t = CosmosTemplate(total_az=2, region=conf("region"), description="UgcUpload loadtest",
-                       component_name="ugc-upload-load-test-component", project_name='ugc-upload-test')
-    TemplateBuilder.buildtemplate(t)
-    return t.to_json()
-
-
-def delete_stack():
-    p_task('Deleting stack template')
-    try:
-        stack = describe_stack()
-        cfn_client = get_client('cloudformation')
-
-        response = cfn_client.delete_stack(
-            StackName=conf('stack_name'))
-
-        stack_id = pickle.load(open("stack-id.p", "rb"))
-        p_dot()
-        waiter = cfn_client.get_waiter('stack_delete_complete')
-        waiter.wait(StackName=stack_id)
-        p_done()
-
-    except ClientError as e:
-        bork('Stack does not exist [' + str(e) + "]")
-
-
-def set_instances(num, type=None):
-    cfn_client = get_client('cloudformation')
-    p_task("Updating stack to set '{0}' instances of '{1}'".format(num, type))
-
-    # 1) InstanceType must be None if Min/MaxSize is 0
-    # 2) Can't just use Cosmos API for updating stack, as you need to supply
-    #    the full template and parameters. This includes the ImageId, which I
-    #    can't find any Cosmos API that exposes this.
-
-    cfn_client.update_stack(
-        StackName=conf('stack_name'),
-        UsePreviousTemplate=True,
-        Capabilities=['CAPABILITY_IAM'],
-        Parameters=to_stack_params({
-            'CnameEntry': None,
-            'CoreInfrastructureStackName': None,
-            'DomainNameBase': None,
-            'Environment': None,
-            'InstanceType': type,
-            'KeyName': None,
-            'MaxSize': str(num),
-            'MinSize': str(num),
-            'DesiredCapacity': str(num),
-            'ElbHealthCheckGracePeriod': None,
-            'UpdateMaxBatchSize': None,
-            'UpdateMinInService': None}))
-    p_done()
-
-    p_task('Waiting for CloudFormation stack to update')
-
-    @retry_on_exception
-    def _block_until_stack_stable():
-        status = describe_stack()['StackStatus']
-        must_eql(status, 'UPDATE_COMPLETE', 'stack status')
-
-    sleep(1)
-    _block_until_stack_stable()
-
-    p_task("Waiting for ASG to reach '{0}' instances".format(num))
-
-    @retry_on_exception
-    def _block_until_instances_ready():
-        g = get_asg()
-        must_hold(g['MaxSize'] == g['MinSize'] == g['DesiredCapacity'] == num,
-                  'stack MaxSize == MinSize == DesiredCapacity == ' + str(num))
-        must_eql(len(g['Instances']), num, 'num instances')
-        for i in g['Instances']:
-            must_eql(i['LifecycleState'], 'InService',
-                     'instance lifecycle state')
-
-    _block_until_instances_ready()
-
-
-def check_asg_not_in_use():
-    email = get_email_address()
-    instances = get_instances()
-    others = set([l['email_address'] for i in instances for l in i['logins']
-                  if l['status'] == 'current' and
-                  l['email_address'].lower() != email.lower()])
-    if others:
-        e("The cluster already has '{0}' instances running. In use by:".format(
-            len(instances)))
-        map(p_bullet, others)
-        if not prompt_yes('Proceed even though cluster may be in use?'):
-            bork('Exiting on user request')
 
 
 ###############################################################################
@@ -556,6 +425,17 @@ def kill_test():
 ###############################################################################
 # GATLING TOOLS
 ###############################################################################
+
+def run_gatling_no_tty(scenario, test_id):
+    run_d = join(data_dir, test_id, 'tty_outputs')
+    mkdir_p(run_d)
+
+    ips = [i['private_ip_address'] for i in get_instances()]
+    gatling_ttys = [ssh('gatling-terminal', run_d, ip, "~/ec2-package/tools/run-gatling-async {0} {1} {2} -s {3}".format(
+        test_id, len(ips), ip, scenario)) for ip in ips]
+    mon_cmd = '~/ec2-package/tools/sys-info ' + test_id
+    loadavg_ttys = [ssh('load-average', run_d, ip, mon_cmd) for ip in ips]
+
 def run_gatling(scenario, test_id):
     run_d = join(data_dir, test_id, 'tty_outputs')
     mkdir_p(run_d)
@@ -730,10 +610,10 @@ def gen_report(test_id):
     p_done()
 
     def _archive_d(dir, rm=False):
-        print("location["+str(dir))
+        bork("location["+str(dir))
 
         d_head, d_tail = split(dir)
-        print("head["+d_head)
+        bork("head["+d_head)
         assert (d_tail is not None)
         p_task("Compressing {0} (this can take a long time)".format(d_tail))
         pkg = abspath(join(archive_d, d_tail + '.tar.bz2'))
@@ -830,6 +710,111 @@ def preflight_checks():
              'or the incorrect stack name configured?')
     p_done()
 
+###############################################################################
+# CFN STACK TOOLS
+###############################################################################
+def from_stack_params(old_params):
+    new_p = {}
+    for p in old_params:
+        new_p[p['ParameterKey']] = p['ParameterValue']
+    return new_p
+
+
+def to_stack_params(p):
+    new_vals = [{'ParameterKey': k, 'ParameterValue': v}
+                for k, v in p.items() if v is not None]
+    old_vals = [{'ParameterKey': k, 'UsePreviousValue': True}
+                for k, v in p.items() if v is None]
+    return old_vals + new_vals
+
+
+def describe_stack():
+    client = get_client('cloudformation')
+    stack_name = conf('stack_name')
+    p_verbose("Asking CFN for stack info on: {0}".format(stack_name))
+    return client.describe_stacks(StackName=stack_name)['Stacks'][0]
+
+
+def get_asg():
+    cfn_client = get_client('cloudformation')
+    p_verbose("Asking CFN for PhysicalResourceId")
+    asg_name = cfn_client.describe_stack_resource(
+        StackName=conf('stack_name'),
+        LogicalResourceId='ComponentAutoScalingGroup'
+    )['StackResourceDetail']['PhysicalResourceId']
+    asg_client = get_client('autoscaling')
+    p_verbose("Asking ASG for info on: {0}".format(asg_name))
+    asg = asg_client.describe_auto_scaling_groups(
+        AutoScalingGroupNames=[asg_name])['AutoScalingGroups'][0]
+    return asg
+
+
+def set_instances(num, type=None):
+    cfn_client = get_client('cloudformation')
+    p_task("Updating stack to set '{0}' instances of '{1}'".format(num, type))
+
+    # 1) InstanceType must be None if Min/MaxSize is 0
+    # 2) Can't just use Cosmos API for updating stack, as you need to supply
+    #    the full template and parameters. This includes the ImageId, which I
+    #    can't find any Cosmos API that exposes this.
+
+    cfn_client.update_stack(
+        StackName=conf('stack_name'),
+        UsePreviousTemplate=True,
+        Capabilities=['CAPABILITY_IAM'],
+        Parameters=to_stack_params({
+            'CnameEntry': None,
+            'CoreInfrastructureStackName': None,
+            'DomainNameBase': None,
+            'Environment': None,
+            'InstanceType': type,
+            'KeyName': None,
+            'MaxSize': str(num),
+            'MinSize': str(num),
+            'DesiredCapacity': str(num),
+            'ElbHealthCheckGracePeriod': None,
+            'UpdateMaxBatchSize': None,
+            'UpdateMinInService': None}))
+    p_done()
+
+    p_task('Waiting for CloudFormation stack to update')
+
+    @retry_on_exception
+    def _block_until_stack_stable():
+        status = describe_stack()['StackStatus']
+        must_eql(status, 'UPDATE_COMPLETE', 'stack status')
+
+    sleep(1)
+    _block_until_stack_stable()
+
+    p_task("Waiting for ASG to reach '{0}' instances".format(num))
+
+    @retry_on_exception
+    def _block_until_instances_ready():
+        g = get_asg()
+        must_hold(g['MaxSize'] == g['MinSize'] == g['DesiredCapacity'] == num,
+                  'stack MaxSize == MinSize == DesiredCapacity == ' + str(num))
+        must_eql(len(g['Instances']), num, 'num instances')
+        for i in g['Instances']:
+            must_eql(i['LifecycleState'], 'InService',
+                     'instance lifecycle state')
+
+    _block_until_instances_ready()
+
+
+def check_asg_not_in_use():
+    email = get_email_address()
+    instances = get_instances()
+    others = set([l['email_address'] for i in instances for l in i['logins']
+                  if l['status'] == 'current' and
+                  l['email_address'].lower() != email.lower()])
+    if others:
+        e("The cluster already has '{0}' instances running. In use by:".format(
+            len(instances)))
+        map(p_bullet, others)
+        if not prompt_yes('Proceed even though cluster may be in use?'):
+            bork('Exiting on user request')
+
 
 ###############################################################################
 # UGC- Setting up Test Environment
@@ -897,6 +882,30 @@ def limit_bandwidths(max_bandwidth, bandwidth_class, bandwidth_default, port):
     parallel_run(_limit_bandwidth, instances)
     p_done()
 
+def generate_stack_template():
+    t = CosmosTemplate(total_az=2, region=conf("region"), description="UgcUpload loadtest",
+                       component_name="ugc-upload-load-test-component", project_name='ugc-upload-test')
+    TemplateBuilder.buildtemplate(t)
+    return t.to_json()
+
+
+def delete_stack():
+    p_task('Deleting stack template')
+    try:
+        stack = describe_stack()
+        cfn_client = get_client('cloudformation')
+
+        response = cfn_client.delete_stack(
+            StackName=conf('stack_name'))
+
+        stack_id = pickle.load(open("stack-id.p", "rb"))
+        p_dot()
+        waiter = cfn_client.get_waiter('stack_delete_complete')
+        waiter.wait(StackName=stack_id)
+        p_done()
+
+    except ClientError as e:
+        bork('Stack does not exist [' + str(e) + "]")
 
 def create_stack():
     register_template()
@@ -948,7 +957,7 @@ def unregister_stack():
         json=jd, cert=get_certificate(), headers=headers)
 
     if (res.status_code == 400):
-        print("unable to unregister the stack [" + str(res.content))
+        bork("unable to unregister the stack [" + str(res.content))
 
 
 def register_main_stack():
@@ -961,7 +970,7 @@ def register_main_stack():
               json=jd, cert=get_certificate(), headers=headers)
 
     if (res.status_code == 400):
-        print("uable to set main stack [" + str(res.content))
+        bork("uable to set main stack [" + str(res.content))
 
 
 def register_stack_with_cosmos():
@@ -973,11 +982,11 @@ def register_stack_with_cosmos():
               json=jd, cert=get_certificate(), headers=headers)
 
     if (res.status_code == 400):
-        print("uable to register stack")
+        bork("uable to register stack")
 
 
 def get_latest_release():
-    res = get(conf('cosmosBaseUrl') + '/v1/services/ugc-loadtest/releases',
+    res = get(conf('cosmosBaseUrl') + '/v1/services/'+conf("cosmoscomponent")+'/releases',
               cert=get_certificate())
 
     return str(res.json()['releases'][0]['version'])
@@ -989,11 +998,11 @@ def release_latest():
 
     headers = {'Content-Type': 'application/json'}
 
-    res = post(conf('cosmosBaseUrl') + '/env/int/component/ugc-loadtest/deploy_release',
+    res = post(conf('cosmosBaseUrl') + '/env/int/component/'+conf("cosmoscomponent")+'/deploy_release',
                json=json_data, cert=get_certificate(), headers=headers)
 
     if (res.status_code == 400):
-        print("uable to do the latest release[" + str(res.content) + "]")
+        bork("uable to do the latest release[" + str(res.content) + "]")
 
 
 def release():
@@ -1108,7 +1117,13 @@ if __name__ == '__main__':
 
         pickle.dump(test_id, open("test-id.p", "wb"))
         p_kv('Test id', test_id)
-        run_gatling(args['<scenario>'], test_id)
+
+        params = (args['<scenario>'], test_id)
+        if args['--type'] == 'async':
+            run_gatling_no_tty(*params)
+        else:
+            run_gatling(*params)
+
         gen_report(test_id)
 
     if args['genreport']:
