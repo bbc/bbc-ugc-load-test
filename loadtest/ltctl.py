@@ -52,7 +52,7 @@ from docopt import docopt
 import sys
 
 sys.path.append("../infrastructure/src")
-# from ..infrastructure.src.ugc.ugcupload import TemplateBuilder
+#from ..infrastructure.src.ugc.ugcupload import TemplateBuilder
 
 import pickle
 from ugc.ugcupload import TemplateBuilder
