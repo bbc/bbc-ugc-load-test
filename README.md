@@ -16,12 +16,9 @@
     * Ensure python `pip` is installed on your machine and install the
    requirements: `sudo pip install -r requirements.txt`.
  * Create a `ltctl.local.conf` file with the following config, changing the
-   paths to your pem_cert, pem_key and ssh_format as needed:
+   paths to your pem_cert, pem_key and ssh_format as needed: [Follow instructions in here to create the keys](openssl.md):
 ```dosini
 [ltctl]
-[ltctl]
-#pem_cert=/home/vagrant/workspace/ugc-load-test/bbc_cert.crt.pem
-#pem_key=/home/vagrant/workspace/ugc-load-test/bbc_cert.key.pem
 pem_cert=/Users/baahk01/workspace/ugc-load-test/bbc_cert.crt.pem
 pem_key=/Users/baahk01/workspace/ugc-load-test/bbc_cert.key.pem
 
