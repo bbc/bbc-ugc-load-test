@@ -19,19 +19,34 @@
    paths to your pem_cert, pem_key and ssh_format as needed:
 ```dosini
 [ltctl]
-pem_cert=/Users/woolda01/BBC/Certificates/alistair-wooldrige-dev-cert-expires-14-09-2016.crt.pem
-pem_key=/Users/woolda01/BBC/Certificates/alistair-wooldrige-dev-cert-expires-14-09-2016.key.pem
+[ltctl]
+#pem_cert=/home/vagrant/workspace/ugc-load-test/bbc_cert.crt.pem
+#pem_key=/home/vagrant/workspace/ugc-load-test/bbc_cert.key.pem
+pem_cert=/Users/baahk01/workspace/ugc-load-test/bbc_cert.crt.pem
+pem_key=/Users/baahk01/workspace/ugc-load-test/bbc_cert.key.pem
+
 
 #
-# Override this based on how you would SSH into instances.
+# Override this based on how you would SSH into instances. E.g. without r,
 # ssh_format={ip},{region}
 #
 ssh_format={ip},{region}
 
-region=eu-west-1
-stack_name=int-gtm-loadtest-main
-results_bucket=gtm-load-tests
-cosmos=https://api.live.bbc.co.uk/cosmos/env/int/component/gtm-loadtest
+region=eu-west-2
+stack_name=int-ugc-loadtest-app
+results_bucket=ugcupload-load-test
+cosmos=https://api.live.bbc.co.uk/cosmos/env/int/component/ugc-loadtest
+cosmosbaseurl=https://api.live.bbc.co.uk/cosmos
+awsaccount=546933502184
+cosmoscomponent=ugc-loadtest
+testdata=s3://ugc-test-data/gatling
+certlocation=/Users/baahk01/workspace/bbc_cert.p12
+gatlingtestsrc=/Users/baahk01/workspace/isite-testing-tools/gatling/ugc/src
+systemundertest=212.58.228.27:443
+
+[jars]
+1=http://central.maven.org/maven2/io/suzaku/boopickle-shapeless_2.12/1.3.0/boopickle-shapeless_2.12-1.3.0.jar
+2=http://central.maven.org/maven2/io/netty/netty-tcnative/2.0.19.Final/netty-tcnative-2.0.19.Final.jar
 
 ```
  * Generate AWS access keys
