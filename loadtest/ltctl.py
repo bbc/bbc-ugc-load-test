@@ -15,6 +15,9 @@ Usage:
     ./ltctl.py release [-v]
     ./ltctl.py cert <cert> [-v]
     ./ltctl.py fetchdependencies [-v]
+    ./ltctl.py startmonitoring [-v]
+    ./ltctl.py completemonitoring [-v]
+    ./ltctl.py turnoffmonitoring [-v]
     ./ltctl.py bandwidth <maxbandwidth> <bandwidthclass> <bandwidthdefaultclass> <port> [-v]
     ./ltctl.py (-h | --help)
     ./ltctl.py --version
@@ -98,6 +101,16 @@ import pprint
 import json
 import jsonpickle
 from cosmosTroposphere import CosmosTemplate
+
+import pycurl
+import getpass
+import io
+import json
+from io import StringIO
+from datetime import datetime
+
+
+
 
 verbose = False
 config = ConfigParser(strict=False)
@@ -213,11 +226,39 @@ def instance_sshname(ip):
     return conf('ssh_format').format(ip=ip, region=conf('region'))
 
 
+def worm_credentials():
+
+    cert_location = conf('pem_cert')
+    cert_key_location = conf('pem_key')
+
+    e = io.BytesIO()
+    buffer = StringIO()
+    c = pycurl.Curl()
+    c.setopt(c.URL, 'https://wormhole.api.bbci.co.uk/account/' + conf('awsaccount') + '/credentials')
+    c.setopt(pycurl.SSL_VERIFYPEER, 1)
+    c.setopt(pycurl.SSL_VERIFYHOST, 2)
+    c.setopt(c.WRITEFUNCTION, e.write)
+    c.setopt(c.SSLCERT, cert_location)
+    c.setopt(c.SSLCERTPASSWD, '')
+    c.setopt(c.SSLKEY, cert_key_location)
+    c.perform()
+    c.close()
+
+    contents = json.loads(e.getvalue().decode('UTF-8'))
+    return contents
+
 def get_client(service):
     try:
         return cache[service]
     except KeyError:
-        cache[service] = client(service, region_name=conf('region'))
+
+        wormHoleCredentials = worm_credentials()
+        cache[service] = client(service,
+                                region_name=conf('region'),
+                                aws_access_key_id=wormHoleCredentials['accessKeyId'],
+                                aws_secret_access_key=wormHoleCredentials['secretAccessKey'],
+                                aws_session_token=wormHoleCredentials['sessionToken']
+                                )
         return cache[service]
 
 
@@ -820,6 +861,77 @@ def check_asg_not_in_use():
 # UGC- Setting up Test Environment
 ###############################################################################
 
+
+def turnoff_dashboard_monitoring():
+
+        try:
+
+            value = "state=None,startTime=None,endTime=None,instances=None"
+            cfn_client = get_client('ssm')
+            response = cfn_client.put_parameter(
+                Name=conf('simulationparameterstore'),
+                Value=value,
+                Type='StringList',
+                Overwrite=True
+            )
+        except ClientError as e:
+            bork('Problems accessing ssm [' + str(e) + "]")
+
+def complete_dashboard_monitoring():
+
+        try:
+            params = get_parameter_store()
+            params['endTime'] = datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
+            params['state'] = 'complete' 
+            value = ', '.join("{!s}={!r}".format(key,val) for (key,val) in params.items())
+
+            cfn_client = get_client('ssm')
+            response = cfn_client.put_parameter(
+                Name=conf('simulationparameterstore'),
+                Value=value,
+                Type='StringList',
+                Overwrite=True
+            )
+        except ClientError as e:
+            bork('Problems accessing ssm [' + str(e) + "]")
+
+
+def start_dashboard_monitoring():
+
+    try:
+
+        num_instances = len(get_instances())
+        cur_time =  datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
+        value = "state=start,startTime={0},endTime=None,instances={1}".format(cur_time, num_instances)
+
+        cfn_client = get_client('ssm')
+        response = cfn_client.put_parameter(
+            Name=conf('simulationparameterstore'),
+            Value=value,
+            Type='StringList',
+            Overwrite=True
+        )
+    except ClientError as e:
+        bork('Problems accessing ssm [' + str(e) + "]")
+
+def get_parameter_store():
+
+    try:
+
+        cfn_client = get_client('ssm')
+
+        response = cfn_client.get_parameter(
+            Name=conf('simulationparameterstore'),
+            WithDecryption=True
+        )
+
+
+        value = response['Parameter']['Value']
+        return  dict(s.split('=', 1) for s in value.split(","))
+
+    except ClientError as e:
+        bork('Problems accessing ssm [' + str(e) + "]")
+
 def download_test_data():
     p_task('download test data')
     instances = get_instances()
@@ -1042,11 +1154,28 @@ if __name__ == '__main__':
     args = docopt(__doc__, version='Load Test Control 0.1')
     verbose = args['--verbose']
 
+    
+    if args['startmonitoring']:
+        print("state before["+str(get_parameter_store())+"]")
+        start_dashboard_monitoring()
+        print("state after["+str(get_parameter_store())+"]")
+        
+    if args['completemonitoring']:
+        print("state before["+str(get_parameter_store())+"]")
+        complete_dashboard_monitoring()
+        print("state after["+str(get_parameter_store())+"]")
+
+    if args['turnoffmonitoring']:
+        print("state before["+str(get_parameter_store())+"]")
+        turnoff_dashboard_monitoring()
+        print("state after["+str(get_parameter_store())+"]")
+    
     if args['fetchdependencies']:
         fetch_dependencies()
 
     if args['cert']:
-        upload_cert(conf('certlocation'))
+        start_dashboard_monitoring()
+        #upload_cert(conf('certlocation'))
 
     if args['release']:
         release()
