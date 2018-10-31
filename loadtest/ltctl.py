@@ -472,10 +472,74 @@ def run_gatling_no_tty(scenario, test_id):
     mkdir_p(run_d)
 
     ips = [i['private_ip_address'] for i in get_instances()]
-    gatling_ttys = [ssh('gatling-terminal', run_d, ip, "~/ec2-package/tools/run-gatling-async {0} {1} {2} -s {3}".format(
-        test_id, len(ips), ip, scenario)) for ip in ips]
+    gat_cmd = "nohup ~/ec2-package/tools/run-gatling-async.sh {0} {1} -s {2} &".format(
+    test_id, len(ips), scenario)
+    gatling_ttys = [ssh('gatling-terminal', run_d, ip, gat_cmd) for ip in ips]
     mon_cmd = '~/ec2-package/tools/sys-info ' + test_id
     loadavg_ttys = [ssh('load-average', run_d, ip, mon_cmd) for ip in ips]
+
+    def _realtime_screen(scr):
+        dots = ''
+        scr.scrollok(1)
+        while None in [c['process'].poll() for c in gatling_ttys]:
+            scr.clear()
+            scr.addstr('Running gatling scenario: ' + scenario +
+                   '. CTRL-C to abort' + dots)
+            dots = dots + '.' if len(dots) < 3 else ''
+            for c, m in zip(gatling_ttys, loadavg_ttys):
+                status = 'running' if c['process'].poll() is None else 'done'
+                load = tail(m['stdout_read'], 1)
+                load = load[0].strip() if load else '?'
+                scr.addstr('\n - ')
+                scr.addstr(c['ip'] + ' (' + status + ', loadavg ' + load +
+                       '): ', A_BOLD)
+                lines = [l for l in tail(c['stdout_read'], 200) if '> Global' in l]
+                if lines:
+                    c['gatling_started'] = True
+                    l = lines[-1].split('(', 1)[1].split(')', 1)[0]
+                    scr.addstr(l)
+                else:
+                    if 'gatling_started' in c and c['gatling_started']:
+                        scr.addstr('unknown! High rate of gatling errors?')
+                    else:
+                        scr.addstr('gatling starting' + dots)
+            c = gatling_ttys[0]
+            scr.addstr('\n\nLatest stdout from ' + c['ip'] + ':')
+            _, width = scr.getmaxyx()
+            lim = width - 8
+            for l in tail(c['stdout_read'], 20):
+                scr.addstr('\n    > ' + l[:lim] + (l[lim:] and '>'), A_DIM)
+            scr.refresh()
+            sleep(1)
+
+    try:
+        wrapper(_realtime_screen)
+    except KeyboardInterrupt:
+        p_complete()
+        p_task('Closing SSH connections')
+        map(close_ssh, loadavg_ttys)
+        map(close_ssh, gatling_ttys)
+        p_done()
+        p_kv('Full gatling terminal stdout/stderr log', run_d)
+        bork('Test Closed.')
+
+    p_task('Closing SSH connections used for monitoring')
+    map(close_ssh, loadavg_ttys)
+    p_done()
+    p_complete()
+    for c in gatling_ttys:
+        if c['process'].returncode != 0:
+            e('ERROR: Gatling on ' + c['ip'])
+            e('\nLast 20 lines in stdout:')
+            map(p_quote, tail(c['stdout_read'], 20))
+            e('\nLast 20 lines in stderr:')
+            map(p_quote, tail(c['stderr_read'], 20))
+            p_kv('\nFull gatling terminal stdout/stderr log', run_d)
+            bork('Gatling error above ^^^.')
+    p_task('Closing SSH connections used for gatling')
+    map(close_ssh, gatling_ttys)
+    p_done()
+
 
 def run_gatling(scenario, test_id):
     run_d = join(data_dir, test_id, 'tty_outputs')
@@ -1250,10 +1314,12 @@ if __name__ == '__main__':
         params = (args['<scenario>'], test_id)
         if args['--type'] == 'async':
             run_gatling_no_tty(*params)
+            start_dashboard_monitoring()
+            print("------ finnish running gatling ------------------------------------")
         else:
+            print("---------- running old gatling -------------------------------------")
             run_gatling(*params)
-
-        gen_report(test_id)
+            gen_report(test_id)
 
     if args['genreport']:
         preflight_checks()

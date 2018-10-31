@@ -3,7 +3,10 @@ TEST_ID=$1
 shift
 NUM_INSTANCES=$1
 shift
+
 set -eu
+
+echo "This script is used to run the gatling scenarios."
 
 exec 1>${HOME}/normal.log
 exec 2>&1
@@ -36,7 +39,10 @@ JAVA_OPTS=" -Xms${JVM_HEAP}k -Xmx${JVM_HEAP}k -Xmn${JVM_YOUNG}k ${GAT_OPTS}" \
 -on "$TEST_ID" \
 "$@"
 
-if ! ls "${LOG_DIR}/${TEST_ID}"* > /dev/null; then
-    echo "No ${LOG_DIR}/${TEST_ID}* dir, possible scenario error"
-    exit 1;
-fi
+echo "------------------------------------ waiting for tests to complete -----------"
+
+
+cur_time=$(date --utc +%FT%TZ)
+aws cloudwatch put-metric-data --region eu-west-2 --namespace UGC_GATLING_SIMULATION --metric-name "RESULTS" --timestamp $cur_time --value 1
+
+

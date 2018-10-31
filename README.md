@@ -28,7 +28,14 @@
    
  * Create a `ltctl.local.conf` from coping file with the following config, changing the
    paths to your pem_cert, pem_key and ssh_format as needed: [Follow instructions in here to create the keys](openssl.md):
+
+ * There are two modes in running the test: Async and non async.
+ 
+	*  Non Async: The output of the tests are piped to your terminal..if you exit the terminal it will terminate the tests.
+	*  Async: The tests run in the background refer to [Dashboard Monitoring](async.md) for information about how to determine when the tests have completed.
+
 ```dosini
+	  
 [ltctl]
 pem_cert=/Users/baahk01/workspace/ugc-load-test/bbc_cert.crt.pem
 pem_key=/Users/baahk01/workspace/ugc-load-test/bbc_cert.key.pem
