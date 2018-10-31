@@ -22,6 +22,7 @@
 	export PYCURL_SSL_LIBRARY=openssl
 	pip install pycurl
 	```
+    * Note: [If still not working try this](https://stackoverflow.com/questions/47888757/importerror-pycurl-libcurl-link-time-ssl-backend-openssl-is-different-from-c)
 
    [Also follow this link to install troposhere](https://confluence.dev.bbc.co.uk/display/RMServices/Gap+Analysis+-+CosmosTroposhere)
    
@@ -133,10 +134,9 @@ Crack open `loadtest/ec2-package/conf/logback.xml` and change
 ### What is the RPM for?
 The RPM (crudely) packages gatling under `/opt/gatling` and also installs
 utilities such as lsof/iptraf.
-
+p
 ### Infrastructure
 The main
 [int-ugc-loadtest-infrastructure](https://admin.live.bbc.co.uk/cosmos/env/int/component/ugc-loadtest/stacks)
 stack contains an AutoScaling group that is only used during a load test. At
 all other times there should be no instances in service.
-
