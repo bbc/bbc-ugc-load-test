@@ -93,6 +93,12 @@ fetch-aws-creds.py <aws_account_id>
 # Get simulation files
 ./ltclt.py prepare
 
+# Used to tell the dashboard test has completed
+./ltctl.py completemonitoring
+
+# Used to tell the dashboard not to display test information
+./ltctl.py turnoffmonitoring
+
 # Create restricted bandwidth:
 # maxbandwidth: The maximum bandwidth
 # bandwidthclass: The bandwidth which will be used by the test
