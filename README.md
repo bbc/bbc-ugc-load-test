@@ -15,7 +15,16 @@
  * You may (probably do) want to create a virtual environment and install pips requirements there
     * Ensure python `pip` is installed on your machine and install the
    requirements: `sudo pip install -r requirements.txt`.
+    * Note: If having problems installing pycurl: Remove from `requirements.txt` and do the following:
+        remove existing pycurl installation
+	```
+	pip uninstall pycurl
+	export PYCURL_SSL_LIBRARY=openssl
+	pip install pycurl
+	```
+
    [Also follow this link to install troposhere](https://confluence.dev.bbc.co.uk/display/RMServices/Gap+Analysis+-+CosmosTroposhere)
+   
  * Create a `ltctl.local.conf` from coping file with the following config, changing the
    paths to your pem_cert, pem_key and ssh_format as needed: [Follow instructions in here to create the keys](openssl.md):
 ```dosini
