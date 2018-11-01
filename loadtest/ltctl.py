@@ -460,13 +460,13 @@ def kill_test():
 # GATLING TOOLS
 ###############################################################################
 
-def run_gatling(scenario, test_id, async):
+def run_gatling(scenario, test_id, my_async):
     run_d = join(data_dir, test_id, 'tty_outputs')
     mkdir_p(run_d)
 
     ips = [i['private_ip_address'] for i in get_instances()]
 
-    if async:
+    if my_async:
         gat_cmd = "nohup ~/ec2-package/tools/run-gatling-async.sh {0} {1} -s {2} &".format(
             test_id, len(ips), scenario)
     else:
