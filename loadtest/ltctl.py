@@ -18,6 +18,9 @@ Usage:
     ./ltctl.py startmonitoring [-v]
     ./ltctl.py completemonitoring [-v]
     ./ltctl.py turnoffmonitoring [-v]
+    ./ltctl.py disablenotifications [-v]
+    ./ltctl.py enablenotifications [-v]
+    ./ltctl.py fetchasynclogs [-v]
     ./ltctl.py bandwidth <maxbandwidth> <bandwidthclass> <bandwidthdefaultclass> <port> [-v]
     ./ltctl.py (-h | --help)
     ./ltctl.py --version
@@ -50,34 +53,29 @@ Examples:
 
         ./ltctl.py genreport "<id>"
 """
-from docopt import docopt
-
 import sys
+
+from docopt import docopt
 
 sys.path.append("../infrastructure/src")
 #from ..infrastructure.src.ugc.ugcupload import TemplateBuilder
 
 import pickle
 from ugc.ugcupload import TemplateBuilder
-from os import listdir
-from os.path import isfile, join
 
 import os
 
-import shutil
 from subprocess import call
-from distutils.dir_util import copy_tree
-import glob
+
 from boto3 import client
 from boto3.s3.transfer import S3Transfer
-from botocore.exceptions import NoCredentialsError, ClientError, WaiterError
+from botocore.exceptions import NoCredentialsError, ClientError
 from click import echo as e
 from click import getchar, style, progressbar
 from configparser import ConfigParser
 from contextlib import contextmanager
 from curses import A_BOLD, A_DIM
 from curses import wrapper
-from datetime import datetime
 from functools import wraps
 
 from mimetypes import guess_type
@@ -89,7 +87,6 @@ from os.path import (abspath, basename, dirname, isdir, isfile, join, normpath,
 from requests import delete, get, post, put
 from shutil import rmtree
 from stopit import ThreadingTimeout
-import subprocess
 from subprocess import CalledProcessError, Popen
 from sys import exit
 from tailer import tail
@@ -97,13 +94,9 @@ from tempfile import TemporaryFile
 from time import sleep
 from traceback import format_exc
 
-import pprint
-import json
-import jsonpickle
 from cosmosTroposphere import CosmosTemplate
 
 import pycurl
-import getpass
 import io
 import json
 from io import StringIO
@@ -467,87 +460,19 @@ def kill_test():
 # GATLING TOOLS
 ###############################################################################
 
-def run_gatling_no_tty(scenario, test_id):
+def run_gatling(scenario, test_id, async):
     run_d = join(data_dir, test_id, 'tty_outputs')
     mkdir_p(run_d)
 
     ips = [i['private_ip_address'] for i in get_instances()]
-    gat_cmd = "nohup ~/ec2-package/tools/run-gatling-async.sh {0} {1} -s {2} &".format(
-    test_id, len(ips), scenario)
-    gatling_ttys = [ssh('gatling-terminal', run_d, ip, gat_cmd) for ip in ips]
-    mon_cmd = '~/ec2-package/tools/sys-info ' + test_id
-    loadavg_ttys = [ssh('load-average', run_d, ip, mon_cmd) for ip in ips]
 
-    def _realtime_screen(scr):
-        dots = ''
-        scr.scrollok(1)
-        while None in [c['process'].poll() for c in gatling_ttys]:
-            scr.clear()
-            scr.addstr('Running gatling scenario: ' + scenario +
-                   '. CTRL-C to abort' + dots)
-            dots = dots + '.' if len(dots) < 3 else ''
-            for c, m in zip(gatling_ttys, loadavg_ttys):
-                status = 'running' if c['process'].poll() is None else 'done'
-                load = tail(m['stdout_read'], 1)
-                load = load[0].strip() if load else '?'
-                scr.addstr('\n - ')
-                scr.addstr(c['ip'] + ' (' + status + ', loadavg ' + load +
-                       '): ', A_BOLD)
-                lines = [l for l in tail(c['stdout_read'], 200) if '> Global' in l]
-                if lines:
-                    c['gatling_started'] = True
-                    l = lines[-1].split('(', 1)[1].split(')', 1)[0]
-                    scr.addstr(l)
-                else:
-                    if 'gatling_started' in c and c['gatling_started']:
-                        scr.addstr('unknown! High rate of gatling errors?')
-                    else:
-                        scr.addstr('gatling starting' + dots)
-            c = gatling_ttys[0]
-            scr.addstr('\n\nLatest stdout from ' + c['ip'] + ':')
-            _, width = scr.getmaxyx()
-            lim = width - 8
-            for l in tail(c['stdout_read'], 20):
-                scr.addstr('\n    > ' + l[:lim] + (l[lim:] and '>'), A_DIM)
-            scr.refresh()
-            sleep(1)
+    if async:
+        gat_cmd = "nohup ~/ec2-package/tools/run-gatling-async.sh {0} {1} -s {2} &".format(
+            test_id, len(ips), scenario)
+    else:
+        gat_cmd = "~/ec2-package/tools/run-gatling {0} {1} -s {2}".format(
+            test_id, len(ips), scenario)
 
-    try:
-        wrapper(_realtime_screen)
-    except KeyboardInterrupt:
-        p_complete()
-        p_task('Closing SSH connections')
-        map(close_ssh, loadavg_ttys)
-        map(close_ssh, gatling_ttys)
-        p_done()
-        p_kv('Full gatling terminal stdout/stderr log', run_d)
-        bork('Test Closed.')
-
-    p_task('Closing SSH connections used for monitoring')
-    map(close_ssh, loadavg_ttys)
-    p_done()
-    p_complete()
-    for c in gatling_ttys:
-        if c['process'].returncode != 0:
-            e('ERROR: Gatling on ' + c['ip'])
-            e('\nLast 20 lines in stdout:')
-            map(p_quote, tail(c['stdout_read'], 20))
-            e('\nLast 20 lines in stderr:')
-            map(p_quote, tail(c['stderr_read'], 20))
-            p_kv('\nFull gatling terminal stdout/stderr log', run_d)
-            bork('Gatling error above ^^^.')
-    p_task('Closing SSH connections used for gatling')
-    map(close_ssh, gatling_ttys)
-    p_done()
-
-
-def run_gatling(scenario, test_id):
-    run_d = join(data_dir, test_id, 'tty_outputs')
-    mkdir_p(run_d)
-
-    ips = [i['private_ip_address'] for i in get_instances()]
-    gat_cmd = "~/ec2-package/tools/run-gatling {0} {1} -s {2}".format(
-        test_id, len(ips), scenario)
     gatling_ttys = [ssh('gatling-terminal', run_d, ip, gat_cmd) for ip in ips]
     mon_cmd = '~/ec2-package/tools/sys-info ' + test_id
     loadavg_ttys = [ssh('load-average', run_d, ip, mon_cmd) for ip in ips]
@@ -1213,12 +1138,73 @@ def update_test_files():
     call(['rm', '-rf', toDirectory + "/*"])
     call(['cp', '-r', fromDirectory, toDirectory])
 
+def blank_lambda_configuration():
+    return {}
+
+def generate_bucket_notification():
+    blank = blank_lambda_configuration()
+    blank['LambdaFunctionConfigurations'] = [{
+        'Id': 'Ugc LoadTest Lambda Configuration',
+        'LambdaFunctionArn': conf('lambdfunctionalias'),
+        'Events': ['s3:ObjectCreated:Put'],
+        'Filter': {'Key': {'FilterRules': [{'Name': 'suffix','Value': 'data.json'}]}}}]
+
+    return blank
+
+def fetch_async_logs():
+    p_task('Fetching async logs')
+    instances = get_instances()
+
+    test_id = pickle.load(open("test-id.p", "rb"))
+
+    async_d = join(data_dir, test_id, 'async')
+    mkdir_p(async_d)
+    def _fetch_log(instance):
+        host = instance_sshname(instance['private_ip_address'])
+        run(['scp', '-rp', host + ':~/async.log', async_d+'/async-'+host+'.log'])
+        p_dot()
+
+    parallel_run(_fetch_log, instances)
+    bork("Files can be found at [" + async_d +"]")
+    p_done()
+
+def bucket_notification(lambda_conf):
+    s3_client = get_client("s3")
+    response = s3_client.put_bucket_notification_configuration(Bucket=conf("bucketname"),
+                                                               NotificationConfiguration=lambda_conf)
+
+def disable_notifications():
+
+    p_task('Disabling bucket notifications')
+    try:
+        bucket_notification(blank_lambda_configuration())
+    except ClientError as e:
+        bork('Problems disabling bucket noitfications [' + str(e) + "]")
+
+
+def enable_notifications():
+
+    p_task('Enabling bucket notifications')
+    try:
+        bucket_notification(generate_bucket_notification())
+    except ClientError as e:
+        bork('Problems enabling bucket noitfications [' + str(e) + "]")
+
 
 if __name__ == '__main__':
     args = docopt(__doc__, version='Load Test Control 0.1')
     verbose = args['--verbose']
 
-    
+
+    if args['fetchasynclogs']:
+        fetch_async_logs()
+
+    if args['disablenotifications']:
+        disable_notifications()
+
+    if args['enablenotifications']:
+        enable_notifications()
+
     if args['startmonitoring']:
         print("state before["+str(get_parameter_store())+"]")
         start_dashboard_monitoring()
@@ -1311,13 +1297,14 @@ if __name__ == '__main__':
         pickle.dump(test_id, open("test-id.p", "wb"))
         p_kv('Test id', test_id)
 
-        params = (args['<scenario>'], test_id)
+        params = (args['<scenario>'], test_id, True)
         if args['--type'] == 'async':
-            run_gatling_no_tty(*params)
             start_dashboard_monitoring()
-            print("------ finnish running gatling ------------------------------------")
+            run_gatling(*params)
+            print("------ finnish running gatling async ------------------------------------")
         else:
-            print("---------- running old gatling -------------------------------------")
+            print("---------- running gatling foreground -------------------------------------")
+            params = (args['<scenario>'], test_id, False)
             run_gatling(*params)
             gen_report(test_id)
 

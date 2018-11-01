@@ -8,7 +8,7 @@ set -eu
 
 echo "This script is used to run the gatling scenarios."
 
-exec 1>${HOME}/normal.log
+exec 1>${HOME}/async.log
 exec 2>&1
 
 LOG_DIR="/var/log/ltctl/gatling"
@@ -39,10 +39,8 @@ JAVA_OPTS=" -Xms${JVM_HEAP}k -Xmx${JVM_HEAP}k -Xmn${JVM_YOUNG}k ${GAT_OPTS}" \
 -on "$TEST_ID" \
 "$@"
 
-echo "------------------------------------ waiting for tests to complete -----------"
-
 
 cur_time=$(date --utc +%FT%TZ)
 aws cloudwatch put-metric-data --region eu-west-2 --namespace UGC_GATLING_SIMULATION --metric-name "RESULTS" --timestamp $cur_time --value 1
-
+echo "------------------------------------ Finnished Updating cloud watch -----------"
 
