@@ -104,8 +104,8 @@ fetch-aws-creds.py <aws_account_id>
 # bandwidthclass: The bandwidth which will be used by the test
 # bandwidthdefaultcalss: The rest of t
 #
-# To cause test to use 1500kb bandwidth on port 91
-./ltctl.py bandwidth 3000 1500 2500 91
+# To cause test to use 500kbs bandwidth on port 91
+./ltctl.py bandwidth 3000kbps 500kbps 2500kbps 91
 ./ltclt.py bandwidth <maxbandwidth> <bandwidthclass> <bandwidthdefaultclass> <port>
 
 ```
@@ -118,21 +118,46 @@ fetch-aws-creds.py <aws_account_id>
 # View infrastructure status
 ./ltctl.py status
 
-# Run the load test described in ./ec2-package/scenarios/ugc/UGCBasicSimulation.scala
-./ltctl.py run ugc.UGCBasicSimulation
+# Async: Run the load test described in ./ec2-package/scenarios/ugc/UGCBasicSimulation.scala 
+./ltctl.py run ugc.UGCBasicSimulation -t async
+
+# Async: Get logs
+./ltctl.py fetchasynclogs
+
+# Non Async: Run the load test described in ./ec2-package/scenarios/ugc/UGCBasicSimulation.scala 
+./ltctl.py run ugc.UGCBasicSimulation -t foreground
 
 # After running the loadtest run report generation manually 
 # (You will be prompted after running the loadtest)
 ./ltctl.py genreport
 
-# Up generated report to S3 bucket 
+# Upload generated report to S3 bucket 
 ./ltctl.py uploadreport
 
 # Tear down infrastructure
 ./ltctl.py spindown
 
+```
+### Monitoring async test via dashboard
 
 ```
+# To update ssm parameter to indicate tests have started
+./ltctl.py startmonitoring 
+
+# To update ssm parameter to indicate tests have concluded
+./ltctl.py completemonitoring
+
+#  To update ssm parameter to indicate are no longer running
+./ltctl.py turnoffmonitoring
+```
+
+### Lambda Notifications
+
+# Disable the lambda notification on the bucket
+./ltctl.py disablenotifications [-v]
+
+# Enable the lambda notification on the bucket
+./ltctl.py enablenotifications [-v]
 
 # Tips and tricks
 
@@ -153,3 +178,4 @@ The main
 [int-ugc-loadtest-infrastructure](https://admin.live.bbc.co.uk/cosmos/env/int/component/ugc-loadtest/stacks)
 stack contains an AutoScaling group that is only used during a load test. At
 all other times there should be no instances in service.
+
