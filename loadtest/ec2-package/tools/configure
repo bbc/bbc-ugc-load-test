@@ -56,7 +56,7 @@ copy_gatling() {
 
     # Syncing the test data 
     mkdir -p user-files/data
-    aws s3 sync s3://ugc-test-data/tests user-files/data
+    aws s3 sync s3://ugc-test-data/loadtest user-files/data
     
     sudo chown -R "$USER" ./
     cd -

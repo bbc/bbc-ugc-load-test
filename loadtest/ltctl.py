@@ -3,7 +3,7 @@
 
 Usage:
     ./ltctl.py spinup [-n <num>] [-t <type>] [-v]
-    ./ltctl.py run <scenario> [-t <type>] [-v]
+    ./ltctl.py run <scenario> [-t <type>] [-b <throttle>] [-v]
     ./ltctl.py genreport [-v]
     ./ltctl.py uploadreport [-v]
     ./ltctl.py spindown [-v]
@@ -34,11 +34,12 @@ Arguments:
     <cert> The certificate
 
 Options:
-    -n <num>, --number <num>    Number of EC2 instances to spin up [default: 2]
-    -t <type>, --type <type>    EC2 Instance Type [default: m4.large]
-    -v , --verbose              Print more informational messages.
-    -h --help                   Show this screen.
-    --version                   Show version.
+    -n <num>, --number <num>                    Number of EC2 instances to spin up [default: 2]
+    -t <type>, --type <type>                    EC2 Instance Type [default: m4.large]
+    -b <throttle>, --throttle <throttle>
+    -v , --verbose                              Print more informational messages.
+    -h --help                                   Show this screen.
+    --version                                   Show version.
 
 Examples:
     Spin up 3 large machines for load testing:
@@ -58,6 +59,7 @@ import sys
 from docopt import docopt
 
 sys.path.append("../infrastructure/src")
+# This is needed to allow the ide to be able to command-click declaration
 #from ..infrastructure.src.ugc.ugcupload import TemplateBuilder
 
 import pickle
@@ -603,7 +605,9 @@ def gen_report(test_id):
     sar_d = join(data_dir, test_id, 'sar_data')
     failed_req_d = join(data_dir, test_id, 'failed_request_logs')
     archive_d = join(results_d, 'archive')
-    print(list(map(mkdir_p, [results_d, sim_log_d, sar_d, failed_req_d, archive_d])))
+    # TODO: The director was not being creted until I called the list need to revisit
+    # maybe the problem was being caused by something else:
+    list(map(mkdir_p, [results_d, sim_log_d, sar_d, failed_req_d, archive_d]))
     instances = get_instances()
     with progressbar([i['private_ip_address'] for i in instances],
                      label='Downloading test data from instances') as ips:
@@ -653,6 +657,7 @@ def gen_report(test_id):
         p_done()
 
     run('mv *.simulation.log ' + abspath(sim_log_d), cwd=results_d, shell=True)
+    # TODO: Commented this out - but need to revisit.
     # _archive_d(sim_log_d, rm=True)
     # _archive_d(join(data_dir, test_id, 'tty_outputs'), rm=True)
     # _archive_d(join('ec2-package', 'scenarios'))
@@ -1190,6 +1195,15 @@ def enable_notifications():
     except ClientError as e:
         bork('Problems enabling bucket noitfications [' + str(e) + "]")
 
+def get_bandwidth_throttle(type):
+    dependencies = config.items('throttle')
+    for dependency in dependencies:
+      if dependency[0] == type:
+          return dependency[1].split(" ")
+
+def build_bandwidth(type):
+    throttle = get_bandwidth_throttle(type)
+    limit_bandwidths(throttle[0], throttle[1], throttle[2], throttle[3])
 
 if __name__ == '__main__':
     args = docopt(__doc__, version='Load Test Control 0.1')
@@ -1274,6 +1288,7 @@ if __name__ == '__main__':
         p_kv('For example', './ltctl run "croupier.Ip"')
 
     if args['run']:
+        build_bandwidth(args['--throttle'])
         preflight_checks()
         spath = join('ec2-package', 'scenarios')
         spath = join(spath, *args['<scenario>'].split('.')) + '.scala'
@@ -1301,9 +1316,9 @@ if __name__ == '__main__':
         if args['--type'] == 'async':
             start_dashboard_monitoring()
             run_gatling(*params)
-            print("------ finnish running gatling async ------------------------------------")
+            p_bullet("------ finnish running gatling async ------------------------------------")
         else:
-            print("---------- running gatling foreground -------------------------------------")
+            p_bullet("---------- running gatling foreground -------------------------------------")
             params = (args['<scenario>'], test_id, False)
             run_gatling(*params)
             gen_report(test_id)
