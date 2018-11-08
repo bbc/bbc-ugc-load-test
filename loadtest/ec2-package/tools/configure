@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eux
+#set -eux
 
 exec 1>${HOME}/configure.log
 exec 2>&1
@@ -32,7 +32,7 @@ clean_logdir() {
 
 clear_bandwidth() {
 
-trap "sudo tc qdisc del dev eth0 root" INT TERM EXIT
+sudo tc qdisc del dev eth0 root
 sudo iptables -t nat -F
 sudo iptables -t mangle -F
 sudo iptables -F
