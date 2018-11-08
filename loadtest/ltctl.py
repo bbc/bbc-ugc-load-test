@@ -462,6 +462,85 @@ def kill_test():
 # GATLING TOOLS
 ###############################################################################
 
+def login_scenario(scenario, test_id):
+    p_task('Logging in')
+    run_d = join(data_dir, test_id, 'tty_outputs')
+    mkdir_p(run_d)
+    instances = get_instances()
+
+    ips = [i['private_ip_address'] for i in get_instances()]
+
+    gat_cmd = "~/ec2-package/tools/run-gatling-async.sh {0} {1} {2} -s {3}".format(
+        test_id, len(instances), "notcomplete", scenario)
+    gatling_ttys = [ssh('gatling-terminal', run_d, ip, gat_cmd) for ip in ips]
+    mon_cmd = '~/ec2-package/tools/sys-info ' + test_id
+    loadavg_ttys = [ssh('load-average', run_d, ip, mon_cmd) for ip in ips]
+
+
+    def _realtime_screen(scr):
+        dots = ''
+        scr.scrollok(1)
+        while None in [c['process'].poll() for c in gatling_ttys]:
+            scr.clear()
+            scr.addstr('Running gatling scenario: ' + scenario +
+                       '. CTRL-C to abort' + dots)
+            dots = dots + '.' if len(dots) < 3 else ''
+            for c in gatling_ttys:
+                status = 'running' if c['process'].poll() is None else 'done'
+                scr.addstr('\n - ')
+                scr.addstr(c['ip'], A_BOLD)
+                lines = [l for l in tail(c['stdout_read'], 200)
+                         if '> Global' in l]
+                if lines:
+                    c['gatling_started'] = True
+                    l = lines[-1].split('(', 1)[1].split(')', 1)[0]
+                    scr.addstr(l)
+                else:
+                    if 'gatling_started' in c and c['gatling_started']:
+                        scr.addstr('unknown! High rate of gatling errors?')
+                    else:
+                        scr.addstr('gatling starting' + dots)
+            c = gatling_ttys[0]
+            scr.addstr('\n\nLatest stdout from ' + c['ip'] + ':')
+            _, width = scr.getmaxyx()
+            lim = width - 8
+            for l in tail(c['stdout_read'], 20):
+                scr.addstr('\n    > ' + l[:lim] + (l[lim:] and '>'), A_DIM)
+            scr.refresh()
+            sleep(1)
+
+    try:
+        wrapper(_realtime_screen)
+    except KeyboardInterrupt:
+        kill_test()
+        p_complete()
+        p_task('Closing SSH connections')
+        map(close_ssh, loadavg_ttys)
+        map(close_ssh, gatling_ttys)
+        p_done()
+        p_kv('Full gatling terminal stdout/stderr log', run_d)
+        p_kv('Run report generation manually using',
+         './ltctl genreport "' + test_id + '"')
+        bork('Test aborted.')
+
+    p_task('Closing SSH connections used for monitoring')
+    map(close_ssh, loadavg_ttys)
+    p_done()
+    p_complete()
+    for c in gatling_ttys:
+        if c['process'].returncode != 0:
+            e('ERROR: Gatling on ' + c['ip'])
+            e('\nLast 20 lines in stdout:')
+            map(p_quote, tail(c['stdout_read'], 20))
+            e('\nLast 20 lines in stderr:')
+            map(p_quote, tail(c['stderr_read'], 20))
+            p_kv('\nFull gatling terminal stdout/stderr log', run_d)
+            bork('Gatling error above ^^^.')
+    p_task('Closing SSH connections used for gatling')
+    map(close_ssh, gatling_ttys)
+    p_done()
+
+
 def run_gatling(scenario, test_id, my_async):
     run_d = join(data_dir, test_id, 'tty_outputs')
     mkdir_p(run_d)
@@ -469,8 +548,8 @@ def run_gatling(scenario, test_id, my_async):
     ips = [i['private_ip_address'] for i in get_instances()]
 
     if my_async:
-        gat_cmd = "nohup ~/ec2-package/tools/run-gatling-async.sh {0} {1} -s {2} &".format(
-            test_id, len(ips), scenario)
+        gat_cmd = "nohup ~/ec2-package/tools/run-gatling-async.sh {0} {1} {2} -s {3} &".format(
+            test_id, len(ips), "complete", scenario)
     else:
         gat_cmd = "~/ec2-package/tools/run-gatling {0} {1} -s {2}".format(
             test_id, len(ips), scenario)
@@ -1288,7 +1367,6 @@ if __name__ == '__main__':
         p_kv('For example', './ltctl run "croupier.Ip"')
 
     if args['run']:
-        build_bandwidth(args['--throttle'])
         preflight_checks()
         spath = join('ec2-package', 'scenarios')
         spath = join(spath, *args['<scenario>'].split('.')) + '.scala'
@@ -1303,7 +1381,8 @@ if __name__ == '__main__':
         cosmos_login()
         configure_machines()
         fetch_dependencies()
-        download_test_data()
+        # This is not needed being done in the configure script
+        #download_test_data()
         upload_cert()
 
         test_id = "{0}.{1}".format(
@@ -1312,7 +1391,10 @@ if __name__ == '__main__':
         pickle.dump(test_id, open("test-id.p", "wb"))
         p_kv('Test id', test_id)
 
+        build_bandwidth(args['--throttle'])
         params = (args['<scenario>'], test_id, True)
+        login_scenario("uk.co.bbc.ugc.loadtest.FetchCookieSimulation", test_id)
+
         if args['--type'] == 'async':
             start_dashboard_monitoring()
             run_gatling(*params)
