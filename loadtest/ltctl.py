@@ -956,7 +956,7 @@ def upload_cert():
 
 
 def limit_bandwidths(max_bandwidth, bandwidth_class, bandwidth_default, port):
-    p_task('Limiting bandwidth')
+    p_task('Limiting bandwidth max_bandwidth=['+max_bandwidth+"] bandwidth_class=["+bandwidth_class+"] bandwidth_default=["+bandwidth_default+"]")
     instances = get_instances()
 
     def _limit_bandwidth(instance):
@@ -1288,7 +1288,6 @@ if __name__ == '__main__':
         p_kv('For example', './ltctl run "croupier.Ip"')
 
     if args['run']:
-        build_bandwidth(args['--throttle'])
         preflight_checks()
         spath = join('ec2-package', 'scenarios')
         spath = join(spath, *args['<scenario>'].split('.')) + '.scala'
@@ -1305,6 +1304,7 @@ if __name__ == '__main__':
         fetch_dependencies()
         download_test_data()
         upload_cert()
+        build_bandwidth(args['--throttle'])
 
         test_id = "{0}.{1}".format(
             datetime.now().strftime('%Y-%m-%d.%H-%M-%S'), args['<scenario>'])
