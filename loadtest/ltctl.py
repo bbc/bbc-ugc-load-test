@@ -462,7 +462,7 @@ def kill_test():
 # GATLING TOOLS
 ###############################################################################
 
-def login_scenario(scenario, test_id):
+def perform_login(scenario, test_id):
     p_task('Logging in')
     run_d = join(data_dir, test_id, 'tty_outputs')
     mkdir_p(run_d)
@@ -1035,7 +1035,7 @@ def upload_cert():
 
 
 def limit_bandwidths(max_bandwidth, bandwidth_class, bandwidth_default, port):
-    p_task('Limiting bandwidth')
+    p_task('Limiting bandwidth max_bandwidth=['+max_bandwidth+"] bandwidth_class=["+bandwidth_class+"] bandwidth_default=["+bandwidth_default+"]")
     instances = get_instances()
 
     def _limit_bandwidth(instance):
@@ -1056,7 +1056,7 @@ def limit_bandwidths(max_bandwidth, bandwidth_class, bandwidth_default, port):
             'sudo tc class add dev eth0 parent 1:1 classid 1:10 htb rate ' + bandwidth_class + ' ceil ' + bandwidth_class)
         p_dot()
         ssh(bandwidth_default + '_class', '/tmp', host,
-            'sudo tc class add dev eth0 parent 1:1 classid 1:11 htb rate ' + bandwidth_default + ' ceil ' + max_bandwidth)
+            'sudo tc class add dev eth0 parent 1:1 classid 1:11 htb rate ' + bandwidth_default + ' ceil ' + bandwidth_default)
         p_dot()
         ssh('sfq_' + bandwidth_class + '_class', '/tmp', host,
             'sudo tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 5')
@@ -1384,6 +1384,7 @@ if __name__ == '__main__':
         # This is not needed being done in the configure script
         #download_test_data()
         upload_cert()
+        build_bandwidth(args['--throttle'])
 
         test_id = "{0}.{1}".format(
             datetime.now().strftime('%Y-%m-%d.%H-%M-%S'), args['<scenario>'])
@@ -1393,7 +1394,7 @@ if __name__ == '__main__':
 
         build_bandwidth(args['--throttle'])
         params = (args['<scenario>'], test_id, True)
-        login_scenario("uk.co.bbc.ugc.loadtest.FetchCookieSimulation", test_id)
+        perform_login("uk.co.bbc.ugc.loadtest.FetchCookieSimulation", test_id)
 
         if args['--type'] == 'async':
             start_dashboard_monitoring()
@@ -1410,7 +1411,6 @@ if __name__ == '__main__':
         check_asg_not_in_use()
         cosmos_login()
         test_id = pickle.load(open("test-id.p", "rb"))
-        # gen_report(args['<test_id>'])
         gen_report(test_id)
 
     if args['uploadreport']:
