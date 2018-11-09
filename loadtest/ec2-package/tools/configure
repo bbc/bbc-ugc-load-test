@@ -1,5 +1,5 @@
 #!/bin/bash
-#set -eux
+set -eux
 
 exec 1>${HOME}/configure.log
 exec 2>&1
@@ -32,7 +32,8 @@ clean_logdir() {
 
 clear_bandwidth() {
 
-sudo tc qdisc del dev eth0 root
+sudo tc qdisc del dev eth0 root || true
+
 sudo iptables -t nat -F
 sudo iptables -t mangle -F
 sudo iptables -F
@@ -118,5 +119,4 @@ set_ulimits
 copy_gatling
 install_oracle_jdk
 kernel_tuning
-
-trap "clear_bandwidth" INT TERM EXIT
+clear_bandwidth

@@ -1328,7 +1328,6 @@ if __name__ == '__main__':
         check_asg_not_in_use()
         cosmos_login()
         test_id = pickle.load(open("test-id.p", "rb"))
-        # gen_report(args['<test_id>'])
         gen_report(test_id)
 
     if args['uploadreport']:
