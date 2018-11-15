@@ -46,7 +46,7 @@ cur_time=$(date --utc +%FT%TZ)
 
 
 
-if [ "$COMPLETION_STATUS" != 'complete' ]; then
+if [ "$COMPLETION_STATUS" = 'complete' ]; then
     aws cloudwatch put-metric-data --region eu-west-2 --namespace UGC_GATLING_SIMULATION --metric-name "RESULTS" --timestamp $cur_time --value 1
     sudo tc qdisc del dev eth0 root
     sudo iptables -t nat -F
