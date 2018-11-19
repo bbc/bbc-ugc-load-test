@@ -21,6 +21,8 @@ Usage:
     ./ltctl.py disablenotifications [-v]
     ./ltctl.py enablenotifications [-v]
     ./ltctl.py fetchasynclogs [-v]
+    ./ltctl.py jvmmonitoring [-v]
+    ./ltctl.py ugcinstance [-v]
     ./ltctl.py bandwidth <maxbandwidth> <bandwidthclass> <bandwidthdefaultclass> <port> [-v]
     ./ltctl.py (-h | --help)
     ./ltctl.py --version
@@ -67,7 +69,6 @@ from ugc.ugcupload import TemplateBuilder
 
 import os
 
-from subprocess import call
 
 from boto3 import client
 from boto3.s3.transfer import S3Transfer
@@ -89,7 +90,8 @@ from os.path import (abspath, basename, dirname, isdir, isfile, join, normpath,
 from requests import delete, get, post, put
 from shutil import rmtree
 from stopit import ThreadingTimeout
-from subprocess import CalledProcessError, Popen
+import subprocess
+from subprocess import CalledProcessError, Popen, PIPE
 from sys import exit
 from tailer import tail
 from tempfile import TemporaryFile
@@ -257,6 +259,13 @@ def get_client(service):
         return cache[service]
 
 
+def get_ugc_instances(force_update=False):
+    ckey = 'instances_response'
+    if force_update or ckey not in cache:
+        cache[ckey] = get('https://api.live.bbc.co.uk/cosmos/env/int/component/ugc-web-receiver/instances',
+                          cert=get_certificate()).json()
+    return cache[ckey]
+
 def get_instances(force_update=False):
     ckey = 'instances_response'
     if force_update or ckey not in cache:
@@ -383,6 +392,29 @@ def cd(path):
 ###############################################################################
 # MACHINE LOGIN/CONFIGURATION
 ###############################################################################
+
+def find_instance_id():
+
+
+    p = subprocess.check_output([os.getcwd()+"/get_instance_id.sh"], stdin=PIPE, stderr=PIPE)
+    return p.decode("utf-8")
+
+def ugc_component_login():
+    #NOTE: Need to check to see if we are already login: have a look at cosmos_login()
+    login_url = 'https://api.live.bbc.co.uk/cosmos/env/int/component/ugc-web-receiver/logins/create'
+    r = post(login_url, cert=get_certificate(),
+             json={'instance_id': find_instance_id()})
+    r.raise_for_status()
+    sleep(0.2)
+
+def start_jvm_monitoring():
+    ugc_component_login()
+    host = instance_sshname(get_ugc_instances()[0]['private_ip_address'])
+    run(['scp', '-rp', 'ugc-webreciever-package', host + ':~/'])
+    p_dot()
+    run(['ssh', host, '~/ugc-webreciever-package/start_jvm_monitoring.sh'])
+    p_dot()
+
 def cosmos_login():
     email = get_email_address()
     login_url = conf('cosmos') + '/logins/create'
@@ -542,6 +574,7 @@ def perform_login(scenario, test_id):
 
 
 def run_gatling(scenario, test_id, my_async):
+    #start_jvm_monitoring()
     run_d = join(data_dir, test_id, 'tty_outputs')
     mkdir_p(run_d)
 
@@ -677,8 +710,15 @@ This directory contains archives from the test run available:
             num_instances=len(instances),
             instance_list=machines))
 
+def jvm_status_report(test_id):
+    jvm_status_report_d = join(data_dir, test_id, 'jvm_status_report')
+    list(map(mkdir_p, [jvm_status_report_d]))
+    host = instance_sshname(get_ugc_instances()[0]['private_ip_address'])
+    run(['scp', '-rp', host + ':~/jvm-monitoring.log', jvm_status_report_d+'/jvm-monitoring-'+host+'.log'])
+    p_dot()
 
 def gen_report(test_id):
+    #jvm_status_report(test_id)
     results_d = join(data_dir, test_id, 'results')
     sim_log_d = join(data_dir, test_id, 'simulation_logs')
     sar_d = join(data_dir, test_id, 'sar_data')
@@ -781,7 +821,7 @@ def upload_report(test_id):
 
 ###############################################################################
 # STATUS REPORTING
-###############################################################################
+###############################################################################d
 def status():
     stack = describe_stack()
     params = from_stack_params(stack['Parameters'])
@@ -842,6 +882,11 @@ def to_stack_params(p):
     return old_vals + new_vals
 
 
+def describe_stack(stackname):
+    client = get_client('cloudformation')
+    p_verbose("Asking CFN for stack info on: {0}".format(stack_name))
+    return client.describe_stacks(StackName=stack_name)['Stacks'][0]
+
 def describe_stack():
     client = get_client('cloudformation')
     stack_name = conf('stack_name')
@@ -895,7 +940,7 @@ def set_instances(num, type=None):
 
     @retry_on_exception
     def _block_until_stack_stable():
-        status = describe_stack()['StackStatus']
+        status = describe_stack(conf('stack_name'))['StackStatus']
         must_eql(status, 'UPDATE_COMPLETE', 'stack status')
 
     sleep(1)
@@ -1077,7 +1122,7 @@ def generate_stack_template():
 def delete_stack():
     p_task('Deleting stack template')
     try:
-        stack = describe_stack()
+        stack = describe_stack(conf('stack_name'))
         cfn_client = get_client('cloudformation')
 
         response = cfn_client.delete_stack(
@@ -1101,7 +1146,7 @@ def create_stack():
 def register_template():
     p_task('Creating stack template')
     try:
-        stack = describe_stack()
+        stack = describe_stack(conf('stack_name'))
         bork('Stack Already exists.')
     except ClientError as e:
         cfn_client = get_client('cloudformation')
@@ -1214,6 +1259,11 @@ def fetch_dependencies():
     p_done()
 
 
+def find_instance_id():
+    client = get_client('ec2')
+    resp = client.describe_instances(Filters=[{"Name":"tag:Name", "Values":["int-ugc-web-receiver"]}])
+    return resp["Reservations"][0]["Instances"][0]["InstanceId"]
+
 def update_test_files():
     dirpath = os.getcwd()
     fromDirectory = conf('gatlingtestsrc') + "/test/scala/"
@@ -1316,9 +1366,15 @@ if __name__ == '__main__':
     if args['fetchdependencies']:
         fetch_dependencies()
 
+    if args['jvmmonitoring']:
+        start_jvm_monitoring()
+
+    if args['ugcinstance']:
+        print(instance_sshname(get_ugc_instances()[0]['private_ip_address']))
+
     if args['cert']:
-        start_dashboard_monitoring()
-        #upload_cert(conf('certlocation'))
+        #start_dashboard_monitoring()
+        upload_cert(conf('certlocation'))
 
     if args['release']:
         release()
@@ -1334,7 +1390,8 @@ if __name__ == '__main__':
         create_stack()
 
     if args['prepare']:
-        update_test_files()
+        #find_instance_id()
+        ugc_component_login()
         # preflight_checks()
         # subprocess.call("./prepare.sh")
 
