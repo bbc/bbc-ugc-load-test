@@ -22,6 +22,7 @@ Usage:
     ./ltctl.py enablenotifications [-v]
     ./ltctl.py fetchasynclogs [-v]
     ./ltctl.py jvmmonitoring [-v]
+    ./ltctl.py jvmmonitoringlogs [-v]
     ./ltctl.py ugcinstance [-v]
     ./ltctl.py bandwidth <maxbandwidth> <bandwidthclass> <bandwidthdefaultclass> <port> [-v]
     ./ltctl.py (-h | --help)
@@ -91,7 +92,7 @@ from requests import delete, get, post, put
 from shutil import rmtree
 from stopit import ThreadingTimeout
 import subprocess
-from subprocess import CalledProcessError, Popen, PIPE
+from subprocess import call, CalledProcessError, Popen, PIPE
 from sys import exit
 from tailer import tail
 from tempfile import TemporaryFile
@@ -1368,6 +1369,10 @@ if __name__ == '__main__':
 
     if args['jvmmonitoring']:
         start_jvm_monitoring()
+
+    if args['jvmmonitoringlogs']:
+        test_id = pickle.load(open("test-id.p", "rb"))
+        jvm_status_report(test_id)
 
     if args['ugcinstance']:
         print(instance_sshname(get_ugc_instances()[0]['private_ip_address']))
