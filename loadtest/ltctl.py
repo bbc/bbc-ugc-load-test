@@ -712,11 +712,14 @@ This directory contains archives from the test run available:
             instance_list=machines))
 
 def jvm_status_report(test_id):
+    ugc_component_login()
     jvm_status_report_d = join(data_dir, test_id, 'jvm_status_report')
     list(map(mkdir_p, [jvm_status_report_d]))
     host = instance_sshname(get_ugc_instances()[0]['private_ip_address'])
-    run(['scp', '-rp', host + ':~/jvm-monitoring.log', jvm_status_report_d+'/jvm-monitoring-'+host+'.log'])
+    run(['ssh', host, '~/ugc-webreciever-package/gen_report.sh'])
     p_dot()
+    run(['scp', '-C', host + ':~/monitoring.tar.gz', jvm_status_report_d+'/'+host+'jvm-monitoring.tar.gz'])
+    bork("location of jvm reports["+str(jvm_status_report_d)+"]")
 
 def gen_report(test_id):
     #jvm_status_report(test_id)
