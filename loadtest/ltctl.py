@@ -21,6 +21,9 @@ Usage:
     ./ltctl.py disablenotifications [-v]
     ./ltctl.py enablenotifications [-v]
     ./ltctl.py fetchasynclogs [-v]
+    ./ltctl.py jvmmonitoring [-v]
+    ./ltctl.py jvmmonitoringlogs [-v]
+    ./ltctl.py ugcinstance [-v]
     ./ltctl.py bandwidth <maxbandwidth> <bandwidthclass> <bandwidthdefaultclass> <port> [-v]
     ./ltctl.py (-h | --help)
     ./ltctl.py --version
@@ -67,7 +70,6 @@ from ugc.ugcupload import TemplateBuilder
 
 import os
 
-from subprocess import call
 
 from boto3 import client
 from boto3.s3.transfer import S3Transfer
@@ -89,7 +91,8 @@ from os.path import (abspath, basename, dirname, isdir, isfile, join, normpath,
 from requests import delete, get, post, put
 from shutil import rmtree
 from stopit import ThreadingTimeout
-from subprocess import CalledProcessError, Popen
+import subprocess
+from subprocess import call, CalledProcessError, Popen, PIPE
 from sys import exit
 from tailer import tail
 from tempfile import TemporaryFile
@@ -257,6 +260,13 @@ def get_client(service):
         return cache[service]
 
 
+def get_ugc_instances(force_update=False):
+    ckey = 'instances_response'
+    if force_update or ckey not in cache:
+        cache[ckey] = get('https://api.live.bbc.co.uk/cosmos/env/int/component/ugc-web-receiver/instances',
+                          cert=get_certificate()).json()
+    return cache[ckey]
+
 def get_instances(force_update=False):
     ckey = 'instances_response'
     if force_update or ckey not in cache:
@@ -383,6 +393,29 @@ def cd(path):
 ###############################################################################
 # MACHINE LOGIN/CONFIGURATION
 ###############################################################################
+
+def find_instance_id():
+
+
+    p = subprocess.check_output([os.getcwd()+"/get_instance_id.sh"], stdin=PIPE, stderr=PIPE)
+    return p.decode("utf-8")
+
+def ugc_component_login():
+    #NOTE: Need to check to see if we are already login: have a look at cosmos_login()
+    login_url = 'https://api.live.bbc.co.uk/cosmos/env/int/component/ugc-web-receiver/logins/create'
+    r = post(login_url, cert=get_certificate(),
+             json={'instance_id': find_instance_id()})
+    r.raise_for_status()
+    sleep(0.2)
+
+def start_jvm_monitoring():
+    ugc_component_login()
+    host = instance_sshname(get_ugc_instances()[0]['private_ip_address'])
+    run(['scp', '-rp', 'ugc-webreciever-package', host + ':~/'])
+    p_dot()
+    run(['ssh', host, '~/ugc-webreciever-package/start_jvm_monitoring.sh'])
+    p_dot()
+
 def cosmos_login():
     email = get_email_address()
     login_url = conf('cosmos') + '/logins/create'
@@ -462,15 +495,95 @@ def kill_test():
 # GATLING TOOLS
 ###############################################################################
 
+def perform_login(scenario, test_id):
+    p_task('Logging in')
+    run_d = join(data_dir, test_id, 'tty_outputs')
+    mkdir_p(run_d)
+    instances = get_instances()
+
+    ips = [i['private_ip_address'] for i in get_instances()]
+
+    gat_cmd = "~/ec2-package/tools/run-gatling-async.sh {0} {1} {2} -s {3}".format(
+        test_id, len(instances), "notcomplete", scenario)
+    gatling_ttys = [ssh('gatling-terminal', run_d, ip, gat_cmd) for ip in ips]
+    mon_cmd = '~/ec2-package/tools/sys-info ' + test_id
+    loadavg_ttys = [ssh('load-average', run_d, ip, mon_cmd) for ip in ips]
+
+
+    def _realtime_screen(scr):
+        dots = ''
+        scr.scrollok(1)
+        while None in [c['process'].poll() for c in gatling_ttys]:
+            scr.clear()
+            scr.addstr('Running gatling scenario: ' + scenario +
+                       '. CTRL-C to abort' + dots)
+            dots = dots + '.' if len(dots) < 3 else ''
+            for c in gatling_ttys:
+                status = 'running' if c['process'].poll() is None else 'done'
+                scr.addstr('\n - ')
+                scr.addstr(c['ip'], A_BOLD)
+                lines = [l for l in tail(c['stdout_read'], 200)
+                         if '> Global' in l]
+                if lines:
+                    c['gatling_started'] = True
+                    l = lines[-1].split('(', 1)[1].split(')', 1)[0]
+                    scr.addstr(l)
+                else:
+                    if 'gatling_started' in c and c['gatling_started']:
+                        scr.addstr('unknown! High rate of gatling errors?')
+                    else:
+                        scr.addstr('gatling starting' + dots)
+            c = gatling_ttys[0]
+            scr.addstr('\n\nLatest stdout from ' + c['ip'] + ':')
+            _, width = scr.getmaxyx()
+            lim = width - 8
+            for l in tail(c['stdout_read'], 20):
+                scr.addstr('\n    > ' + l[:lim] + (l[lim:] and '>'), A_DIM)
+            scr.refresh()
+            sleep(1)
+
+    try:
+        wrapper(_realtime_screen)
+    except KeyboardInterrupt:
+        kill_test()
+        p_complete()
+        p_task('Closing SSH connections')
+        map(close_ssh, loadavg_ttys)
+        map(close_ssh, gatling_ttys)
+        p_done()
+        p_kv('Full gatling terminal stdout/stderr log', run_d)
+        p_kv('Run report generation manually using',
+         './ltctl genreport "' + test_id + '"')
+        bork('Test aborted.')
+
+    p_task('Closing SSH connections used for monitoring')
+    map(close_ssh, loadavg_ttys)
+    p_done()
+    p_complete()
+    for c in gatling_ttys:
+        if c['process'].returncode != 0:
+            e('ERROR: Gatling on ' + c['ip'])
+            e('\nLast 20 lines in stdout:')
+            map(p_quote, tail(c['stdout_read'], 20))
+            e('\nLast 20 lines in stderr:')
+            map(p_quote, tail(c['stderr_read'], 20))
+            p_kv('\nFull gatling terminal stdout/stderr log', run_d)
+            bork('Gatling error above ^^^.')
+    p_task('Closing SSH connections used for gatling')
+    map(close_ssh, gatling_ttys)
+    p_done()
+
+
 def run_gatling(scenario, test_id, my_async):
+    #start_jvm_monitoring()
     run_d = join(data_dir, test_id, 'tty_outputs')
     mkdir_p(run_d)
 
     ips = [i['private_ip_address'] for i in get_instances()]
 
     if my_async:
-        gat_cmd = "nohup ~/ec2-package/tools/run-gatling-async.sh {0} {1} -s {2} &".format(
-            test_id, len(ips), scenario)
+        gat_cmd = "nohup ~/ec2-package/tools/run-gatling-async.sh {0} {1} {2} -s {3} &".format(
+            test_id, len(ips), "complete", scenario)
     else:
         gat_cmd = "~/ec2-package/tools/run-gatling {0} {1} -s {2}".format(
             test_id, len(ips), scenario)
@@ -598,8 +711,15 @@ This directory contains archives from the test run available:
             num_instances=len(instances),
             instance_list=machines))
 
+def jvm_status_report(test_id):
+    jvm_status_report_d = join(data_dir, test_id, 'jvm_status_report')
+    list(map(mkdir_p, [jvm_status_report_d]))
+    host = instance_sshname(get_ugc_instances()[0]['private_ip_address'])
+    run(['scp', '-rp', host + ':~/jvm-monitoring.log', jvm_status_report_d+'/jvm-monitoring-'+host+'.log'])
+    p_dot()
 
 def gen_report(test_id):
+    #jvm_status_report(test_id)
     results_d = join(data_dir, test_id, 'results')
     sim_log_d = join(data_dir, test_id, 'simulation_logs')
     sar_d = join(data_dir, test_id, 'sar_data')
@@ -702,7 +822,7 @@ def upload_report(test_id):
 
 ###############################################################################
 # STATUS REPORTING
-###############################################################################
+###############################################################################d
 def status():
     stack = describe_stack()
     params = from_stack_params(stack['Parameters'])
@@ -763,6 +883,11 @@ def to_stack_params(p):
     return old_vals + new_vals
 
 
+def describe_stack(stackname):
+    client = get_client('cloudformation')
+    p_verbose("Asking CFN for stack info on: {0}".format(stack_name))
+    return client.describe_stacks(StackName=stack_name)['Stacks'][0]
+
 def describe_stack():
     client = get_client('cloudformation')
     stack_name = conf('stack_name')
@@ -816,7 +941,7 @@ def set_instances(num, type=None):
 
     @retry_on_exception
     def _block_until_stack_stable():
-        status = describe_stack()['StackStatus']
+        status = describe_stack(conf('stack_name'))['StackStatus']
         must_eql(status, 'UPDATE_COMPLETE', 'stack status')
 
     sleep(1)
@@ -977,7 +1102,7 @@ def limit_bandwidths(max_bandwidth, bandwidth_class, bandwidth_default, port):
             'sudo tc class add dev eth0 parent 1:1 classid 1:10 htb rate ' + bandwidth_class + ' ceil ' + bandwidth_class)
         p_dot()
         ssh(bandwidth_default + '_class', '/tmp', host,
-            'sudo tc class add dev eth0 parent 1:1 classid 1:11 htb rate ' + bandwidth_default + ' ceil ' + max_bandwidth)
+            'sudo tc class add dev eth0 parent 1:1 classid 1:11 htb rate ' + bandwidth_default + ' ceil ' + bandwidth_default)
         p_dot()
         ssh('sfq_' + bandwidth_class + '_class', '/tmp', host,
             'sudo tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 5')
@@ -998,7 +1123,7 @@ def generate_stack_template():
 def delete_stack():
     p_task('Deleting stack template')
     try:
-        stack = describe_stack()
+        stack = describe_stack(conf('stack_name'))
         cfn_client = get_client('cloudformation')
 
         response = cfn_client.delete_stack(
@@ -1022,7 +1147,7 @@ def create_stack():
 def register_template():
     p_task('Creating stack template')
     try:
-        stack = describe_stack()
+        stack = describe_stack(conf('stack_name'))
         bork('Stack Already exists.')
     except ClientError as e:
         cfn_client = get_client('cloudformation')
@@ -1135,6 +1260,11 @@ def fetch_dependencies():
     p_done()
 
 
+def find_instance_id():
+    client = get_client('ec2')
+    resp = client.describe_instances(Filters=[{"Name":"tag:Name", "Values":["int-ugc-web-receiver"]}])
+    return resp["Reservations"][0]["Instances"][0]["InstanceId"]
+
 def update_test_files():
     dirpath = os.getcwd()
     fromDirectory = conf('gatlingtestsrc') + "/test/scala/"
@@ -1237,9 +1367,19 @@ if __name__ == '__main__':
     if args['fetchdependencies']:
         fetch_dependencies()
 
+    if args['jvmmonitoring']:
+        start_jvm_monitoring()
+
+    if args['jvmmonitoringlogs']:
+        test_id = pickle.load(open("test-id.p", "rb"))
+        jvm_status_report(test_id)
+
+    if args['ugcinstance']:
+        print(instance_sshname(get_ugc_instances()[0]['private_ip_address']))
+
     if args['cert']:
-        start_dashboard_monitoring()
-        #upload_cert(conf('certlocation'))
+        #start_dashboard_monitoring()
+        upload_cert(conf('certlocation'))
 
     if args['release']:
         release()
@@ -1255,7 +1395,8 @@ if __name__ == '__main__':
         create_stack()
 
     if args['prepare']:
-        update_test_files()
+        #find_instance_id()
+        ugc_component_login()
         # preflight_checks()
         # subprocess.call("./prepare.sh")
 
@@ -1302,7 +1443,8 @@ if __name__ == '__main__':
         cosmos_login()
         configure_machines()
         fetch_dependencies()
-        download_test_data()
+        # This is not needed being done in the configure script
+        #download_test_data()
         upload_cert()
         build_bandwidth(args['--throttle'])
 
@@ -1312,7 +1454,10 @@ if __name__ == '__main__':
         pickle.dump(test_id, open("test-id.p", "wb"))
         p_kv('Test id', test_id)
 
+        build_bandwidth(args['--throttle'])
         params = (args['<scenario>'], test_id, True)
+        perform_login("uk.co.bbc.ugc.loadtest.FetchCookieSimulation", test_id)
+
         if args['--type'] == 'async':
             start_dashboard_monitoring()
             run_gatling(*params)
@@ -1328,7 +1473,6 @@ if __name__ == '__main__':
         check_asg_not_in_use()
         cosmos_login()
         test_id = pickle.load(open("test-id.p", "rb"))
-        # gen_report(args['<test_id>'])
         gen_report(test_id)
 
     if args['uploadreport']:

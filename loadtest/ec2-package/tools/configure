@@ -1,5 +1,5 @@
 #!/bin/bash
-#set -eux
+set -eux
 
 exec 1>${HOME}/configure.log
 exec 2>&1
@@ -21,6 +21,15 @@ ensure_no_previous() {
     if pkill 'java'; then
         echo 'There were previous java processes to kill.'
     fi
+
+    if pkill 'sadc'; then
+        echo 'There were previous sadc processes to kill.'
+    fi
+
+    if pkill 'sar'; then
+        echo 'There were previous sar processes to kill.'
+    fi
+
 }
 
 clean_logdir() {
@@ -32,7 +41,8 @@ clean_logdir() {
 
 clear_bandwidth() {
 
-sudo tc qdisc del dev eth0 root
+sudo tc qdisc del dev eth0 root || true
+
 sudo iptables -t nat -F
 sudo iptables -t mangle -F
 sudo iptables -F
@@ -118,5 +128,4 @@ set_ulimits
 copy_gatling
 install_oracle_jdk
 kernel_tuning
-
-trap "clear_bandwidth" INT TERM EXIT
+clear_bandwidth

@@ -3,6 +3,8 @@ TEST_ID=$1
 shift
 NUM_INSTANCES=$1
 shift
+COMPLETION_STATUS=$1
+shift
 
 set -eu
 
@@ -41,6 +43,20 @@ JAVA_OPTS=" -Xms${JVM_HEAP}k -Xmx${JVM_HEAP}k -Xmn${JVM_YOUNG}k ${GAT_OPTS}" \
 
 
 cur_time=$(date --utc +%FT%TZ)
-aws cloudwatch put-metric-data --region eu-west-2 --namespace UGC_GATLING_SIMULATION --metric-name "RESULTS" --timestamp $cur_time --value 1
-echo "------------------------------------ Finnished Updating cloud watch -----------"
+
+
+
+if [ "$COMPLETION_STATUS" = 'complete' ]; then
+    aws cloudwatch put-metric-data --region eu-west-2 --namespace UGC_GATLING_SIMULATION --metric-name "RESULTS" --timestamp $cur_time --value 1
+    sudo tc qdisc del dev eth0 root
+    sudo iptables -t nat -F
+    sudo iptables -t mangle -F
+    sudo iptables -F
+    sudo iptables -X
+    sudo iptables -P INPUT ACCEPT
+    sudo iptables -P FORWARD ACCEPT
+    sudo iptables -P OUTPUT ACCEPT
+
+    echo "------------------------------------ Finnished Updating cloud watch -----------"
+fi
 
