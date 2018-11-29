@@ -394,27 +394,40 @@ def cd(path):
 # MACHINE LOGIN/CONFIGURATION
 ###############################################################################
 
-def find_instance_id():
-
-
+def find_instance_id_old():
     p = subprocess.check_output([os.getcwd()+"/get_instance_id.sh"], stdin=PIPE, stderr=PIPE)
     return p.decode("utf-8")
 
 def ugc_component_login():
-    #NOTE: Need to check to see if we are already login: have a look at cosmos_login()
+    p_task('creating ugc web receiver logins')
+
     login_url = 'https://api.live.bbc.co.uk/cosmos/env/int/component/ugc-web-receiver/logins/create'
-    r = post(login_url, cert=get_certificate(),
-             json={'instance_id': find_instance_id()})
-    r.raise_for_status()
-    sleep(0.2)
+    instances = get_ugc_instances()
+    @retry_on_exception
+    def _create_login(instance):
+        r = post(login_url, cert=get_certificate(),
+             json={'instance_id': instance['id']})
+        r.raise_for_status()
+        sleep(0.3)
+
+    parallel_run(_create_login, instances)
+    p_done()
+
 
 def start_jvm_monitoring():
+    p_task("starting jvm monitoring\n")
     ugc_component_login()
-    host = instance_sshname(get_ugc_instances()[0]['private_ip_address'])
-    run(['scp', '-rp', 'ugc-webreciever-package', host + ':~/'])
-    p_dot()
-    run(['ssh', host, '~/ugc-webreciever-package/start_jvm_monitoring.sh'])
-    p_dot()
+    instances = get_ugc_instances()
+    def _start_monitoring(instance):
+        host = instance_sshname(instance['private_ip_address'])
+        run(['scp', '-rp', 'ugc-webreciever-package', host + ':~/'])
+        p_dot()
+        run(['ssh', host, '~/ugc-webreciever-package/start_jvm_monitoring.sh'])
+        p_dot()
+
+    parallel_run(_start_monitoring, instances)
+    p_done()
+
 
 def cosmos_login():
     email = get_email_address()
@@ -712,13 +725,21 @@ This directory contains archives from the test run available:
             instance_list=machines))
 
 def jvm_status_report(test_id):
+    p_task("Fetching monitoring logs\n")
     ugc_component_login()
+    instances = get_ugc_instances()
+
     jvm_status_report_d = join(data_dir, test_id, 'jvm_status_report')
     list(map(mkdir_p, [jvm_status_report_d]))
-    host = instance_sshname(get_ugc_instances()[0]['private_ip_address'])
-    run(['ssh', host, '~/ugc-webreciever-package/gen_report.sh'])
-    p_dot()
-    run(['scp', '-C', host + ':~/monitoring.tar.gz', jvm_status_report_d+'/'+host+'jvm-monitoring.tar.gz'])
+
+    def _fetch_monitoring_logs(instance):
+        host = instance_sshname(instance['private_ip_address'])
+        run(['ssh', host, '~/ugc-webreciever-package/gen_report.sh'])
+        p_dot()
+        run(['scp', '-C', host + ':~/monitoring.tar.gz', jvm_status_report_d+'/'+host+'jvm-monitoring.tar.gz'])
+
+    parallel_run(_fetch_monitoring_logs, instances)
+    p_done()
     bork("location of jvm reports["+str(jvm_status_report_d)+"]")
 
 def gen_report(test_id):
@@ -826,6 +847,17 @@ def upload_report(test_id):
 ###############################################################################
 # STATUS REPORTING
 ###############################################################################d
+def ugcstatus():
+
+    instances = get_ugc_instances()
+    if instances:
+        for i in instances:
+            p_bullet(i['id'] + ': ' + i['private_ip_address'] + ',' +
+                 i['region'])
+    else:
+        p_bullet('<none running>')
+
+
 def status():
     stack = describe_stack()
     params = from_stack_params(stack['Parameters'])
@@ -1262,6 +1294,16 @@ def fetch_dependencies():
     parallel_run(_fetch_dependencies, instances)
     p_done()
 
+def ugc_instance_ids():
+    client = get_client('ec2')
+    resp = client.describe_instances(Filters=[{"Name":"tag:Name", "Values":["int-ugc-web-receiver"]}])
+    instanceIds = []
+    for reservations in resp["Reservations"]:
+        instanceIds.append(str(reservations["Instances"][0]["InstanceId"]))
+
+    return instanceIds
+
+
 
 def find_instance_id():
     client = get_client('ec2')
@@ -1378,7 +1420,7 @@ if __name__ == '__main__':
         jvm_status_report(test_id)
 
     if args['ugcinstance']:
-        print(instance_sshname(get_ugc_instances()[0]['private_ip_address']))
+        ugcstatus()
 
     if args['cert']:
         #start_dashboard_monitoring()
@@ -1402,6 +1444,7 @@ if __name__ == '__main__':
         ugc_component_login()
         # preflight_checks()
         # subprocess.call("./prepare.sh")
+        #print(ugc_instance_ids())
 
     if args['bandwidth']:
         preflight_checks()
