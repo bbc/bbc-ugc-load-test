@@ -23,6 +23,7 @@ Usage:
     ./ltctl.py fetchasynclogs [-v]
     ./ltctl.py jvmmonitoring [-v]
     ./ltctl.py jvmmonitoringlogs [-v]
+    ./ltctl.py modifyjstat [-v]
     ./ltctl.py ugcinstance [-v]
     ./ltctl.py bandwidth <maxbandwidth> <bandwidthclass> <bandwidthdefaultclass> <port> [-v]
     ./ltctl.py (-h | --help)
@@ -105,10 +106,10 @@ import pycurl
 import io
 import json
 from io import StringIO
-from datetime import datetime
+from datetime import datetime, timedelta
 
-
-
+import re
+import tarfile
 
 verbose = False
 config = ConfigParser(strict=False)
@@ -408,11 +409,10 @@ def ugc_component_login():
         r = post(login_url, cert=get_certificate(),
              json={'instance_id': instance['id']})
         r.raise_for_status()
-        sleep(0.3)
+        sleep(2)
 
     parallel_run(_create_login, instances)
     p_done()
-
 
 def start_jvm_monitoring():
     p_task("starting jvm monitoring\n")
@@ -740,6 +740,8 @@ def jvm_status_report(test_id):
 
     parallel_run(_fetch_monitoring_logs, instances)
     p_done()
+    pickle.dump(jvm_status_report_d, open("jvm_status_report.p", "wb"))
+    p_kv('Jvm Report Directory', jvm_status_report_d)
     bork("location of jvm reports["+str(jvm_status_report_d)+"]")
 
 def gen_report(test_id):
@@ -849,6 +851,7 @@ def upload_report(test_id):
 ###############################################################################d
 def ugcstatus():
 
+    ugc_component_login()
     instances = get_ugc_instances()
     if instances:
         for i in instances:
@@ -918,7 +921,7 @@ def to_stack_params(p):
     return old_vals + new_vals
 
 
-def describe_stack(stackname):
+def describe_stack_name(stack_name):
     client = get_client('cloudformation')
     p_verbose("Asking CFN for stack info on: {0}".format(stack_name))
     return client.describe_stacks(StackName=stack_name)['Stacks'][0]
@@ -1182,7 +1185,7 @@ def create_stack():
 def register_template():
     p_task('Creating stack template')
     try:
-        stack = describe_stack(conf('stack_name'))
+        stack = describe_stack_name(conf('stack_name'))
         bork('Stack Already exists.')
     except ClientError as e:
         cfn_client = get_client('cloudformation')
@@ -1331,6 +1334,50 @@ def generate_bucket_notification():
 
     return blank
 
+def dump(obj):
+    for attr in dir(obj):
+        print("obj.%s = %r" % (attr, getattr(obj, attr)))
+
+def modify_jvm_logs():
+    report_dir = pickle.load(open("jvm_status_report.p", "rb"))
+    print("report_dir["+report_dir+"]")
+    instances = get_ugc_instances()
+    if instances:
+        for i in instances:
+            host = instance_sshname(i['private_ip_address'])
+            tar_folder = join(report_dir, host+'jvm_status_report')
+            list(map(mkdir_p, [tar_folder]))
+            tar = tarfile.open(report_dir+'/'+host+'jvm-monitoring.tar.gz','r:gz')
+            tar.extractall(path=tar_folder)
+            out = ssh('gatling-terminal', tar_folder, i['private_ip_address'], "~/ugc-webreciever-package/get_start_time.sh")
+            lines = [l for l in tail(out['stdout_read'], 200)]
+            t = datetime.strptime(lines[-1], "%H:%M")
+
+            classFile = tar_folder+'/monitoring/jvm-monitoring-class.log'
+            gcFile = tar_folder+'/monitoring/jvm-monitoring-gc.log'
+
+            modify_time_jstat_log_file(classFile, t)
+            modify_time_jstat_log_file(gcFile, t)
+
+def modify_time_jstat_log_file(file, curtime):
+
+    with open(file) as fp:
+        line = fp.readline()
+        cnt = 1
+        with open(file+".mod", "w+") as op:
+            while line:
+                values = line.split()
+                try:
+                    val = values[-1]
+                    tm = int(round(float(val)))
+                    p = curtime + timedelta(seconds=tm)
+                    op.write(re.sub(r"([-+]?[0-9]*\.?[0-9]+)*$", str(p.time()), line)+"\n")
+                except ValueError:
+                    op.write(line+"\n")
+
+                line = fp.readline()
+                cnt += 1
+
 def fetch_async_logs():
     p_task('Fetching async logs')
     instances = get_instances()
@@ -1395,19 +1442,19 @@ if __name__ == '__main__':
         enable_notifications()
 
     if args['startmonitoring']:
-        print("state before["+str(get_parameter_store())+"]")
+        b("state before["+str(get_parameter_store())+"]")
         start_dashboard_monitoring()
-        print("state after["+str(get_parameter_store())+"]")
+        b("state after["+str(get_parameter_store())+"]")
         
     if args['completemonitoring']:
-        print("state before["+str(get_parameter_store())+"]")
+        b("state before["+str(get_parameter_store())+"]")
         complete_dashboard_monitoring()
-        print("state after["+str(get_parameter_store())+"]")
+        b("state after["+str(get_parameter_store())+"]")
 
     if args['turnoffmonitoring']:
-        print("state before["+str(get_parameter_store())+"]")
+        b("state before["+str(get_parameter_store())+"]")
         turnoff_dashboard_monitoring()
-        print("state after["+str(get_parameter_store())+"]")
+        b("state after["+str(get_parameter_store())+"]")
     
     if args['fetchdependencies']:
         fetch_dependencies()
@@ -1430,7 +1477,7 @@ if __name__ == '__main__':
         release()
 
     if args['describestack']:
-        print(str(describe_stack()['StackStatus']))
+        b(str(describe_stack()['StackStatus']))
 
     if args['deletestack']:
         delete_stack()
@@ -1441,7 +1488,8 @@ if __name__ == '__main__':
 
     if args['prepare']:
         #find_instance_id()
-        ugc_component_login()
+        #ugc_component_login()
+        modify_jvm_logs()
         # preflight_checks()
         # subprocess.call("./prepare.sh")
         #print(ugc_instance_ids())
@@ -1525,6 +1573,9 @@ if __name__ == '__main__':
         preflight_checks()
         test_id = pickle.load(open("test-id.p", "rb"))
         upload_report(test_id)
+
+    if args['modifyjstat']:
+        modify_jvm_logs()
 
     if args['spindown']:
         preflight_checks()
