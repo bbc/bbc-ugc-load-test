@@ -115,17 +115,23 @@ fetch-aws-creds.py <aws_account_id>
 # Provision infrastructure
 ./ltctl.py spinup -n 2 -t m4.large
 
+# Start jvm monitoring of system undertest
+./ltctl.py jvmmonitoring
+
+# Fetch jvm monitoring 
+./ltctl.py jvmmonitoringlogs
+
 # View infrastructure status
 ./ltctl.py status
 
 # Async: Run the load test described in ./ec2-package/scenarios/ugc/UGCBasicSimulation.scala 
-./ltctl.py run ugc.UGCBasicSimulation -t async
+./ltctl.py run ugc.UGCBasicSimulation -t async  -b 1
 
 # Async: Get logs
 ./ltctl.py fetchasynclogs
 
 # Non Async: Run the load test described in ./ec2-package/scenarios/ugc/UGCBasicSimulation.scala 
-./ltctl.py run ugc.UGCBasicSimulation -t foreground
+./ltctl.py run ugc.UGCBasicSimulation -t foreground  -b 1
 
 # After running the loadtest run report generation manually 
 # (You will be prompted after running the loadtest)
@@ -151,6 +157,18 @@ fetch-aws-creds.py <aws_account_id>
 ./ltctl.py turnoffmonitoring
 ```
 
+### JVM monitoring
+```
+# To start jvm monitoring of the ugc instances
+./ltctl.py jvmmonitoring
+
+# To fetch the logs
+./ltctl.py jvmmonitoringlogs
+
+# To make the logs more readable
+./ltctl.py modifyjstat
+
+```
 ### Lambda Notifications
 
 # Disable the lambda notification on the bucket
