@@ -3,7 +3,7 @@
 
 Usage:
     ./ltctl.py spinup [-n <num>] [-t <type>] [-v]
-    ./ltctl.py run <scenario> [-t <type>] [-b <throttle>] [-v]
+    ./ltctl.py run <scenario> [-t <type>] [-b <throttle>] [-l <login>] [-v]
     ./ltctl.py genreport [-v]
     ./ltctl.py uploadreport [-v]
     ./ltctl.py spindown [-v]
@@ -36,11 +36,13 @@ Arguments:
     <bandwidthdefaultclass> The rest of the bandwidth
     <port> The port
     <cert> The certificate
+    <login>
 
 Options:
     -n <num>, --number <num>                    Number of EC2 instances to spin up [default: 2]
     -t <type>, --type <type>                    EC2 Instance Type [default: m4.large]
     -b <throttle>, --throttle <throttle>
+    -l <login>, --login <login>                 Causes the system to login
     -v , --verbose                              Print more informational messages.
     -h --help                                   Show this screen.
     --version                                   Show version.
@@ -979,7 +981,7 @@ def set_instances(num, type=None):
 
     @retry_on_exception
     def _block_until_stack_stable():
-        status = describe_stack(conf('stack_name'))['StackStatus']
+        status = describe_stack_name(conf('stack_name'))['StackStatus']
         must_eql(status, 'UPDATE_COMPLETE', 'stack status')
 
     sleep(1)
@@ -1161,7 +1163,7 @@ def generate_stack_template():
 def delete_stack():
     p_task('Deleting stack template')
     try:
-        stack = describe_stack(conf('stack_name'))
+        stack = describe_stack_name(conf('stack_name'))
         cfn_client = get_client('cloudformation')
 
         response = cfn_client.delete_stack(
@@ -1550,7 +1552,9 @@ if __name__ == '__main__':
 
         build_bandwidth(args['--throttle'])
         params = (args['<scenario>'], test_id, True)
-        perform_login("uk.co.bbc.ugc.loadtest.FetchCookieSimulation", test_id)
+
+        if (args['--login'].lower()) == "y":
+            perform_login("uk.co.bbc.ugc.loadtest.FetchCookieSimulation", test_id)
 
         if args['--type'] == 'async':
             start_dashboard_monitoring()

@@ -14,5 +14,5 @@ while read pidline ; do
       fi
 done < /tmp/foo
 mkdir -p monitoring
-sudo jstat -class $pid 100ms &> monitoring/jvm-monitoring-class.log &
-sudo jstat -gccause -h20 -t $pid 100ms &> monitoring/jvm-monitoring-gc.log &
+sudo jstat -class -h10 $pid 100ms &> monitoring/jvm-monitoring-class.log &
+sudo jstat -gccause -h10 -t $pid 100ms &> monitoring/jvm-monitoring-gc.log &
